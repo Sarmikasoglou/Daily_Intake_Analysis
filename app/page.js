@@ -247,12 +247,11 @@ export default function Page() {
     <main className="app-shell">
       <section className="hero">
         <div>
-          <p className="eyebrow">Vercel Intake Visualizer</p>
-          <h1>Upload many cow intake files, compare roughage averages, and map transponders to cow IDs.</h1>
+          <p className="eyebrow">Intake Visualizer</p>
+          <h1>Upload intake files and view cow intake.</h1>
           <p className="hero-copy">
-            The app merges multiple CSV uploads in the browser, keeps <strong>Unlimited</strong> and{" "}
-            <strong>Stolen</strong> as separate lines, and can switch from overall totals to
-            roughage-specific per-cow averages.
+            Upload CSVs, link EID to eartag, and switch between totals, cow comparisons, and daily
+            reports.
           </p>
         </div>
       </section>
