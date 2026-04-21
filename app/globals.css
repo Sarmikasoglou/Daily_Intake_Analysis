@@ -154,6 +154,27 @@ select:focus {
   flex-wrap: wrap;
 }
 
+.dm-panel {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(36, 37, 28, 0.08);
+}
+
+.dm-copy {
+  margin: 0 0 12px;
+  color: var(--muted);
+}
+
+.dm-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.dm-field {
+  min-width: 0;
+}
+
 .action-button {
   border: 0;
   border-radius: 999px;
@@ -292,12 +313,13 @@ select:focus {
   display: inline-block;
 }
 
-.legend-swatch.unlimited {
-  background: var(--accent);
-}
-
-.legend-swatch.stolen {
-  background: var(--stolen);
+.legend-dashed {
+  background:
+    repeating-linear-gradient(
+      90deg,
+      currentColor 0 10px,
+      transparent 10px 16px
+    ) !important;
 }
 
 .chart-container {
@@ -314,6 +336,35 @@ select:focus {
   border-radius: 20px;
   padding: 12px;
   overflow: hidden;
+}
+
+.cow-picker {
+  margin-bottom: 18px;
+}
+
+.cow-picker-copy {
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.cow-chip-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.cow-chip {
+  border: 1px solid rgba(36, 37, 28, 0.14);
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--text);
+}
+
+.cow-chip-selected {
+  background: var(--accent);
+  color: #fffdf8;
+  border-color: var(--accent);
 }
 
 .empty-state {
@@ -350,25 +401,9 @@ select:focus {
   stroke-linejoin: round;
 }
 
-.series-unlimited {
-  stroke: var(--accent);
-}
-
-.series-stolen {
-  stroke: var(--stolen);
-}
-
 .point {
   stroke: #fffdf8;
   stroke-width: 2;
-}
-
-.point-unlimited {
-  fill: var(--accent);
-}
-
-.point-stolen {
-  fill: var(--stolen);
 }
 
 .notes {
@@ -395,6 +430,7 @@ select:focus {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .dm-grid,
   .tracked-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -419,6 +455,11 @@ select:focus {
     flex-direction: column;
   }
 
+  .dm-grid,
+  .tracked-grid {
+    grid-template-columns: 1fr;
+  }
+
   .field-wide {
     grid-column: span 1;
   }
@@ -431,10 +472,6 @@ select:focus {
   .tracked-header {
     align-items: start;
     flex-direction: column;
-  }
-
-  .tracked-grid {
-    grid-template-columns: 1fr;
   }
 
   .chart-panel,

@@ -10,6 +10,7 @@ This is now a Vercel-ready Next.js app for the CSV format in `1654_3.30.26_4.21.
 - Show each tracked cow with its eartag and linked transponder/EID.
 - Separate `Unlimited` and `Stolen` into two chart lines.
 - Convert intake values from lbs to kg by default.
+- Optionally switch the analysis to Dry Matter Intake by entering DM percent for each roughage type.
 - Show three views:
   - specific day
   - summarized day range
@@ -41,3 +42,4 @@ This is now a Vercel-ready Next.js app for the CSV format in `1654_3.30.26_4.21.
 - In your files, the intake `Transponder` is matched to the lookup-file `EID`, and the displayed cow identifier is the lookup-file `EART` eartag number.
 - `Intake from Midnight` uses visits with start times from 12:00 AM through 11:59 PM on the same calendar day.
 - `Intake from AM Feeding` uses visits with start times from 6:00 AM through the next day at 5:59 AM.
+- In Dry Matter Intake mode, the app multiplies each intake value by the DM percent for that row's roughage type. Example: `45` means 45% DM.
