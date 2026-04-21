@@ -33,4 +33,4 @@ This is now a Vercel-ready Next.js app for the CSV format in `1654_3.30.26_4.21.
 
 - The sample CSV column is named `Intake (kg)`, but the app includes a unit selector because you said the uploaded values are actually in lbs.
 - Negative intake values can be ignored with the checkbox. It is enabled by default because the sample file includes small negative readings.
-- The lookup file should contain a transponder column and a cow ID column. Common names like `Transponder`, `Transponder ID`, `Cow ID`, `CowID`, or `cow_id` are supported.
+- The lookup file should contain a transponder column and a cow ID column. Common names like `Transponder`, `Transponder ID`, `EID`, `Cow ID`, `CowID`, `cow_id`, and `EART` are supported.

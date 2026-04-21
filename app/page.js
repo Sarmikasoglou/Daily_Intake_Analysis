@@ -467,6 +467,8 @@ function mapLookupRow(row) {
   const transponder = String(
     row.Transponder ||
       row.transponder ||
+      row.EID ||
+      row.eid ||
       row.TransponderID ||
       row["Transponder ID"] ||
       row.Tag ||
@@ -479,6 +481,8 @@ function mapLookupRow(row) {
       row.CowID ||
       row["Cow Id"] ||
       row.cow_id ||
+      row.EART ||
+      row.eart ||
       row.Cow ||
       row.cow ||
       row.ID ||
