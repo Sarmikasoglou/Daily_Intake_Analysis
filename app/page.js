@@ -909,14 +909,19 @@ function mapLookupRow(row) {
 
 function mapWeightRow(row) {
   const eid = String(row.EID || row.eid || "").trim();
-  const rawDate = row.Date || row.date || "";
-  const rawWeight = row["Weight (Kg)"] || row["Weight (kg)"] || row.weight || row.Weight || "";
+  const rawDate = row.timestamp || row.Timestamp || row.Date || row.date || "";
+  const rawWeight =
+    row["Weight (Kg)"] ||
+    row["Weight (kg)"] ||
+    row.weight ||
+    row.Weight ||
+    "";
 
   if (!eid || rawDate === "" || rawWeight === "") {
     return null;
   }
 
-  const timestamp = new Date(rawDate);
+  const timestamp = rawDate instanceof Date ? rawDate : new Date(rawDate);
   const weightKg = Number.parseFloat(rawWeight);
 
   if (Number.isNaN(timestamp.getTime()) || Number.isNaN(weightKg)) {
