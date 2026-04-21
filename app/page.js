@@ -30,9 +30,27 @@ export default function Page() {
   const [summary, setSummary] = useState(emptySummary);
 
   const mappingByTransponder = useMemo(() => buildMappingLookup(mappingRows), [mappingRows]);
+  const enrichedRows = useMemo(() => enrichRows(rows, mappingByTransponder), [rows, mappingByTransponder]);
+  const processedRows = useMemo(
+    () => getProcessedRows(enrichedRows, unitMode, ignoreNegative),
+    [enrichedRows, unitMode, ignoreNegative]
+  );
+  const filteredRows = useMemo(
+    () => filterRowsByScope(processedRows, analysisScope),
+    [processedRows, analysisScope]
+  );
   const roughageOptions = useMemo(() => {
     return Array.from(new Set(rows.map((row) => row.roughageType).filter(Boolean))).sort();
   }, [rows]);
+  const trackedCows = useMemo(() => buildTrackedCowList(enrichedRows), [enrichedRows]);
+  const midnightReportRows = useMemo(
+    () => buildDailyCowReportRows(processedRows, getMidnightReportDateKey),
+    [processedRows]
+  );
+  const amFeedingReportRows = useMemo(
+    () => buildDailyCowReportRows(processedRows, getAmFeedingReportDateKey),
+    [processedRows]
+  );
 
   useEffect(() => {
     if (!rows.length) {
@@ -43,9 +61,6 @@ export default function Page() {
       return;
     }
 
-    const enrichedRows = enrichRows(rows, mappingByTransponder);
-    const processedRows = getProcessedRows(enrichedRows, unitMode, ignoreNegative);
-    const filteredRows = filterRowsByScope(processedRows, analysisScope);
     setSummary(buildSummary(filteredRows));
 
     if (!filteredRows.length) {
@@ -132,6 +147,44 @@ export default function Page() {
     }
   }
 
+  function handleDownloadReport(reportType) {
+    const reportRows = reportType === "am-feeding" ? amFeedingReportRows : midnightReportRows;
+    const reportName =
+      reportType === "am-feeding" ? "Intake from AM Feeding" : "Intake from Midnight";
+    const fileName =
+      reportType === "am-feeding" ? "intake_from_am_feeding.csv" : "intake_from_midnight.csv";
+
+    if (!reportRows.length) {
+      setStatusText(`Upload intake files first so the app can generate ${reportName}.`);
+      return;
+    }
+
+    const csv = toCsv(
+      reportRows,
+      [
+        "report_day",
+        "eartag",
+        "transponder_eid",
+        "roughage_types",
+        "unlimited_intake_kg",
+        "stolen_intake_kg",
+        "total_intake_kg",
+        "source_files",
+      ]
+    );
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setStatusText(`Downloaded ${reportName} with ${reportRows.length} cow-day rows.`);
+  }
+
   return (
     <main className="app-shell">
       <section className="hero">
@@ -154,7 +207,7 @@ export default function Page() {
           </label>
 
           <label className="field field-wide">
-            <span>Upload transponder to cow ID lookup</span>
+            <span>Upload transponder to eartag lookup</span>
             <input type="file" accept=".csv,text/csv" onChange={handleMappingUpload} />
           </label>
 
@@ -235,6 +288,22 @@ export default function Page() {
           {" | "}
           Mapping rows: <strong>{mappingRows.length}</strong>
         </p>
+        <div className="action-row">
+          <button
+            className="action-button"
+            type="button"
+            onClick={() => handleDownloadReport("midnight")}
+          >
+            Download Intake from Midnight
+          </button>
+          <button
+            className="action-button action-button-secondary"
+            type="button"
+            onClick={() => handleDownloadReport("am-feeding")}
+          >
+            Download Intake from AM Feeding
+          </button>
+        </div>
       </section>
 
       <section className="stats-grid stats-grid-wide">
@@ -289,6 +358,32 @@ export default function Page() {
         </div>
       </section>
 
+      <section className="panel tracked-panel">
+        <div className="tracked-header">
+          <div>
+            <p className="eyebrow">Tracked Cows</p>
+            <h3>Each cow tracked by eartag and linked EID</h3>
+          </div>
+          <p className="tracked-count">{trackedCows.length} cows</p>
+        </div>
+        {trackedCows.length ? (
+          <div className="tracked-grid">
+            {trackedCows.map((cow) => (
+              <article key={`${cow.eartag}-${cow.transponder}`} className="tracked-card">
+                <span className="tracked-label">Eartag</span>
+                <strong>{cow.eartag}</strong>
+                <span className="tracked-meta">EID / transponder: {cow.transponder}</span>
+                <span className="tracked-meta">Rows: {cow.rowCount}</span>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-inline">
+            Upload intake files and optionally the EART/EID lookup file to see tracked cows here.
+          </div>
+        )}
+      </section>
+
       <section className="panel notes">
         <h3>How each plot works</h3>
         <ul>
@@ -301,8 +396,17 @@ export default function Page() {
             type and plots the average intake per cow for each time bucket, day, or week.
           </li>
           <li>
-            <strong>Lookup upload:</strong> a second CSV can link <code>Transponder</code> values to
-            your own cow IDs so multi-file uploads are grouped per cow instead of raw transponder only.
+            <strong>Lookup upload:</strong> a second CSV can link intake <code>Transponder</code>
+            values to the lookup-file <code>EID</code>, and the displayed cow identifier is the
+            matching <code>EART</code> eartag number.
+          </li>
+          <li>
+            <strong>Intake from Midnight:</strong> exports one row per cow from 12:00 AM through
+            11:59 PM for each calendar day.
+          </li>
+          <li>
+            <strong>Intake from AM Feeding:</strong> exports one row per cow from 6:00 AM through
+            the next day at 5:59 AM, using each visit start time to assign the feeding day.
           </li>
         </ul>
       </section>
@@ -458,7 +562,7 @@ function mapIntakeRow(row, sourceFile) {
     intakeRaw,
     roughageType: String(row["Roughage type"] || "").trim(),
     transponder,
-    cowId: transponder || "Unknown",
+    eartag: transponder || "Unknown",
     sourceFile,
   };
 }
@@ -507,7 +611,7 @@ function buildMappingLookup(mappingRows) {
 function enrichRows(rows, mappingLookup) {
   return rows.map((row) => ({
     ...row,
-    cowId: mappingLookup.get(row.transponder) || row.transponder || "Unknown",
+    eartag: mappingLookup.get(row.transponder) || row.transponder || "Unknown",
   }));
 }
 
@@ -541,7 +645,7 @@ function buildSummary(rows) {
 
   const unlimitedTotal = rows.filter((row) => row.unlimited).reduce((sum, row) => sum + row.intakeKg, 0);
   const stolenTotal = rows.filter((row) => row.stolen).reduce((sum, row) => sum + row.intakeKg, 0);
-  const cowCount = new Set(rows.map((row) => row.cowId)).size;
+  const cowCount = new Set(rows.map((row) => row.eartag)).size;
 
   return {
     rowsLoaded: rows.length.toLocaleString(),
@@ -583,7 +687,7 @@ function buildSpecificDaySeries(rows, dayKey, scope) {
     };
   }
 
-  const cowCount = new Set(dayRows.map((row) => row.cowId)).size || 1;
+  const cowCount = new Set(dayRows.map((row) => row.eartag)).size || 1;
   const buckets = Array.from(groupRowsBy(dayRows, (row) => row.timeBucketKey).entries())
     .sort((a, b) => a[0].localeCompare(b[0]));
   let unlimitedRunning = 0;
@@ -690,7 +794,7 @@ function summarizeByDay(rows, averagePerCow) {
     if (row.stolen) {
       bucket.stolen += row.intakeKg;
     }
-    bucket.cows.add(row.cowId);
+    bucket.cows.add(row.eartag);
     summary.set(row.dateKey, bucket);
   });
 
@@ -715,6 +819,83 @@ function summarizeByDay(rows, averagePerCow) {
       ];
     })
   );
+}
+
+function buildTrackedCowList(rows) {
+  const grouped = new Map();
+
+  rows.forEach((row) => {
+    const key = `${row.eartag}__${row.transponder}`;
+    const bucket = grouped.get(key) || {
+      eartag: row.eartag || "Unknown",
+      transponder: row.transponder || "Unknown",
+      rowCount: 0,
+    };
+    bucket.rowCount += 1;
+    grouped.set(key, bucket);
+  });
+
+  return Array.from(grouped.values()).sort((a, b) => String(a.eartag).localeCompare(String(b.eartag)));
+}
+
+function buildDailyCowReportRows(rows, getReportDateKey) {
+  const grouped = new Map();
+
+  rows.forEach((row) => {
+    const reportDay = getReportDateKey(row.timestamp);
+    const key = `${reportDay}__${row.eartag}`;
+    const bucket = grouped.get(key) || {
+      report_day: reportDay,
+      eartag: row.eartag || "Unknown",
+      transponderSet: new Set(),
+      roughageSet: new Set(),
+      sourceFileSet: new Set(),
+      unlimited: 0,
+      stolen: 0,
+    };
+
+    bucket.transponderSet.add(row.transponder || "Unknown");
+    bucket.sourceFileSet.add(row.sourceFile || "");
+    if (row.roughageType) {
+      bucket.roughageSet.add(row.roughageType);
+    }
+    if (row.unlimited) {
+      bucket.unlimited += row.intakeKg;
+    }
+    if (row.stolen) {
+      bucket.stolen += row.intakeKg;
+    }
+
+    grouped.set(key, bucket);
+  });
+
+  return Array.from(grouped.values())
+    .sort((a, b) => {
+      const dateCompare = a.report_day.localeCompare(b.report_day);
+      return dateCompare || String(a.eartag).localeCompare(String(b.eartag));
+    })
+    .map((row) => ({
+      report_day: row.report_day,
+      eartag: row.eartag,
+      transponder_eid: Array.from(row.transponderSet).sort().join(" | "),
+      roughage_types: Array.from(row.roughageSet).sort().join(" | "),
+      unlimited_intake_kg: formatNumber(row.unlimited),
+      stolen_intake_kg: formatNumber(row.stolen),
+      total_intake_kg: formatNumber(row.unlimited + row.stolen),
+      source_files: Array.from(row.sourceFileSet).sort().join(" | "),
+    }));
+}
+
+function getMidnightReportDateKey(timestamp) {
+  return toDateKey(timestamp);
+}
+
+function getAmFeedingReportDateKey(timestamp) {
+  const reportDate = new Date(timestamp);
+  if (reportDate.getHours() < 6) {
+    reportDate.setDate(reportDate.getDate() - 1);
+  }
+  return toDateKey(reportDate);
 }
 
 function groupRowsBy(rows, getKey) {
@@ -813,7 +994,28 @@ function formatNumber(value) {
   return Number(value).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
+    useGrouping: false,
   });
+}
+
+function toCsv(rows, headers) {
+  const lines = [headers.join(",")];
+  rows.forEach((row) => {
+    lines.push(
+      headers
+        .map((header) => escapeCsvValue(row[header] ?? ""))
+        .join(",")
+    );
+  });
+  return lines.join("\r\n");
+}
+
+function escapeCsvValue(value) {
+  const text = String(value);
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
 }
 
 function countDistinct(rows, key) {

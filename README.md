@@ -7,6 +7,7 @@ This is now a Vercel-ready Next.js app for the CSV format in `1654_3.30.26_4.21.
 - Upload one or more intake CSV files directly in the browser.
 - Merge data from multiple cows into one analysis session.
 - Upload a second CSV that maps `Transponder` values to your own cow IDs.
+- Show each tracked cow with its eartag and linked transponder/EID.
 - Separate `Unlimited` and `Stolen` into two chart lines.
 - Convert intake values from lbs to kg by default.
 - Show three views:
@@ -16,6 +17,9 @@ This is now a Vercel-ready Next.js app for the CSV format in `1654_3.30.26_4.21.
 - Switch between:
   - all uploaded cows combined
   - average per cow for a selected roughage type
+- Download two daily reports with one cow per row per day:
+  - Intake from Midnight
+  - Intake from AM Feeding
 
 ## Local development
 
@@ -34,3 +38,6 @@ This is now a Vercel-ready Next.js app for the CSV format in `1654_3.30.26_4.21.
 - The sample CSV column is named `Intake (kg)`, but the app includes a unit selector because you said the uploaded values are actually in lbs.
 - Negative intake values can be ignored with the checkbox. It is enabled by default because the sample file includes small negative readings.
 - The lookup file should contain a transponder column and a cow ID column. Common names like `Transponder`, `Transponder ID`, `EID`, `Cow ID`, `CowID`, `cow_id`, and `EART` are supported.
+- In your files, the intake `Transponder` is matched to the lookup-file `EID`, and the displayed cow identifier is the lookup-file `EART` eartag number.
+- `Intake from Midnight` uses visits with start times from 12:00 AM through 11:59 PM on the same calendar day.
+- `Intake from AM Feeding` uses visits with start times from 6:00 AM through the next day at 5:59 AM.

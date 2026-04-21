@@ -33,6 +33,10 @@ select {
   font: inherit;
 }
 
+button {
+  cursor: pointer;
+}
+
 .app-shell {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
@@ -143,6 +147,35 @@ select:focus {
   font-size: 0.95rem;
 }
 
+.action-row {
+  margin-top: 16px;
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.action-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 18px;
+  background: var(--accent);
+  color: #fffdf8;
+  box-shadow: 0 10px 24px rgba(23, 89, 74, 0.18);
+}
+
+.action-button:hover {
+  background: #124b3e;
+}
+
+.action-button-secondary {
+  background: var(--stolen);
+  box-shadow: 0 10px 24px rgba(177, 79, 31, 0.18);
+}
+
+.action-button-secondary:hover {
+  background: #944118;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -172,6 +205,63 @@ select:focus {
 .chart-panel {
   margin-top: 16px;
   padding: 24px;
+}
+
+.tracked-panel {
+  margin-top: 16px;
+  padding: 24px;
+}
+
+.tracked-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.tracked-count {
+  margin: 0;
+  color: var(--muted);
+}
+
+.tracked-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.tracked-card {
+  padding: 16px;
+  border: 1px solid rgba(36, 37, 28, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.56);
+}
+
+.tracked-card strong {
+  display: block;
+  font-size: 1.3rem;
+  margin: 4px 0 8px;
+}
+
+.tracked-label,
+.tracked-meta {
+  display: block;
+  color: var(--muted);
+}
+
+.tracked-label {
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.tracked-meta {
+  font-size: 0.92rem;
+}
+
+.empty-inline {
+  color: var(--muted);
 }
 
 .chart-header {
@@ -305,6 +395,10 @@ select:focus {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .tracked-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .field-wide {
     grid-column: span 2;
   }
@@ -321,6 +415,10 @@ select:focus {
     grid-template-columns: 1fr;
   }
 
+  .action-row {
+    flex-direction: column;
+  }
+
   .field-wide {
     grid-column: span 1;
   }
@@ -330,7 +428,17 @@ select:focus {
     flex-direction: column;
   }
 
+  .tracked-header {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .tracked-grid {
+    grid-template-columns: 1fr;
+  }
+
   .chart-panel,
+  .tracked-panel,
   .controls,
   .notes,
   .stat-card {
