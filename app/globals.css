@@ -86,6 +86,31 @@ button {
   padding: 22px;
 }
 
+.tabs-panel {
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.tabs-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.tab-button {
+  border: 1px solid rgba(24, 69, 59, 0.16);
+  border-radius: 999px;
+  padding: 11px 16px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+}
+
+.tab-button-active {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+
 .control-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -283,6 +308,29 @@ select:focus {
 
 .empty-inline {
   color: var(--muted);
+}
+
+.weights-table-wrap {
+  overflow-x: auto;
+}
+
+.weights-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.weights-table th,
+.weights-table td {
+  text-align: left;
+  padding: 12px 10px;
+  border-bottom: 1px solid rgba(24, 69, 59, 0.1);
+}
+
+.weights-table th {
+  color: var(--muted);
+  font-size: 0.88rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .chart-header {

@@ -1,5 +1,6 @@
 "use client";
 
+import * as XLSX from "xlsx";
 import { useEffect, useMemo, useState } from "react";
 
 const LB_TO_KG = 0.45359237;
@@ -22,8 +23,10 @@ const emptySummary = {
 };
 
 export default function Page() {
+  const [activeTab, setActiveTab] = useState("intake");
   const [rows, setRows] = useState([]);
   const [mappingRows, setMappingRows] = useState([]);
+  const [weightRows, setWeightRows] = useState([]);
   const [unitMode, setUnitMode] = useState("lbs");
   const [intakeBasis, setIntakeBasis] = useState(AS_FED_MODE);
   const [viewMode, setViewMode] = useState("day");
@@ -56,6 +59,8 @@ export default function Page() {
   const intakeUnitLabel = intakeBasis === DMI_MODE ? "kg DM" : "kg";
   const intakeLabelText = intakeBasis === DMI_MODE ? "Dry Matter Intake" : "Intake";
   const trackedCows = useMemo(() => buildTrackedCowList(enrichedRows), [enrichedRows]);
+  const linkedWeightRows = useMemo(() => enrichWeightRows(weightRows, mappingByTransponder), [weightRows, mappingByTransponder]);
+  const latestWeights = useMemo(() => buildLatestWeights(linkedWeightRows), [linkedWeightRows]);
   const midnightReportRows = useMemo(
     () => buildDailyCowReportRows(processedRows, getMidnightReportDateKey, intakeBasis, intakeUnitLabel),
     [processedRows, intakeBasis, intakeUnitLabel]
@@ -201,6 +206,31 @@ export default function Page() {
     }
   }
 
+  async function handleWeightUpload(event) {
+    const [file] = event.target.files || [];
+    if (!file) {
+      return;
+    }
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const firstSheet = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[firstSheet];
+      const parsedRows = XLSX.utils
+        .sheet_to_json(sheet, { defval: "" })
+        .map(mapWeightRow)
+        .filter(Boolean)
+        .sort((a, b) => b.timestamp - a.timestamp);
+
+      setWeightRows(parsedRows);
+      setStatusText(`Loaded ${parsedRows.length} body-weight rows from ${file.name}.`);
+    } catch (error) {
+      setWeightRows([]);
+      setStatusText(`Error reading body-weight file: ${error.message}`);
+    }
+  }
+
   function handleDownloadReport(reportType) {
     const reportRows = reportType === "am-feeding" ? amFeedingReportRows : midnightReportRows;
     const reportName =
@@ -247,15 +277,34 @@ export default function Page() {
     <main className="app-shell">
       <section className="hero">
         <div>
-          <p className="eyebrow">Intake Visualizer</p>
-          <h1>Upload intake files and view cow intake.</h1>
+          <p className="eyebrow">Cow Intake and Body Weight Visualizer</p>
+          <h1>Upload cow files and review intake or body weights.</h1>
           <p className="hero-copy">
-            Upload CSVs, link EID to eartag, and switch between totals, cow comparisons, and daily
-            reports.
+            Link EID to eartag once, then switch between intake analysis and body-weight tracking.
           </p>
         </div>
       </section>
+      <section className="panel tabs-panel">
+        <div className="tabs-row">
+          <button
+            type="button"
+            className={`tab-button ${activeTab === "intake" ? "tab-button-active" : ""}`}
+            onClick={() => setActiveTab("intake")}
+          >
+            Intake
+          </button>
+          <button
+            type="button"
+            className={`tab-button ${activeTab === "weights" ? "tab-button-active" : ""}`}
+            onClick={() => setActiveTab("weights")}
+          >
+            Body Weights
+          </button>
+        </div>
+      </section>
 
+      {activeTab === "intake" ? (
+        <>
       <section className="panel controls">
         <div className="control-grid">
           <label className="field field-wide">
@@ -546,6 +595,107 @@ export default function Page() {
           </li>
         </ul>
       </section>
+        </>
+      ) : (
+        <>
+      <section className="panel controls">
+        <div className="control-grid">
+          <label className="field field-wide">
+            <span>Upload body-weight file</span>
+            <input type="file" accept=".xls,.xlsx,.csv,text/csv" onChange={handleWeightUpload} />
+          </label>
+
+          <label className="field field-wide">
+            <span>Upload transponder to eartag lookup</span>
+            <input type="file" accept=".csv,text/csv" onChange={handleMappingUpload} />
+          </label>
+        </div>
+
+        <p className="status">{statusText}</p>
+        <p className="substatus">
+          Weight rows: <strong>{linkedWeightRows.length}</strong>
+          {" | "}
+          Cows with weights: <strong>{latestWeights.length}</strong>
+          {" | "}
+          Mapping rows: <strong>{mappingRows.length}</strong>
+        </p>
+      </section>
+
+      <section className="stats-grid">
+        <article className="panel stat-card">
+          <span className="stat-label">Weight rows loaded</span>
+          <strong>{linkedWeightRows.length.toLocaleString()}</strong>
+        </article>
+        <article className="panel stat-card">
+          <span className="stat-label">Cows linked</span>
+          <strong>{latestWeights.length.toLocaleString()}</strong>
+        </article>
+        <article className="panel stat-card">
+          <span className="stat-label">Latest average (kg)</span>
+          <strong>{latestWeights.length ? formatNumber(latestWeights.reduce((sum, row) => sum + row.weightKg, 0) / latestWeights.length) : "0.00"}</strong>
+        </article>
+        <article className="panel stat-card">
+          <span className="stat-label">Most recent date</span>
+          <strong>{latestWeights[0]?.dateKey || "-"}</strong>
+        </article>
+      </section>
+
+      <section className="panel tracked-panel">
+        <div className="tracked-header">
+          <div>
+            <p className="eyebrow">Body Weights</p>
+            <h3>Latest linked body weights by eartag</h3>
+          </div>
+          <p className="tracked-count">{latestWeights.length} cows</p>
+        </div>
+        {latestWeights.length ? (
+          <div className="weights-table-wrap">
+            <table className="weights-table">
+              <thead>
+                <tr>
+                  <th>Eartag</th>
+                  <th>EID</th>
+                  <th>Date</th>
+                  <th>Weight (kg)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {latestWeights.map((row) => (
+                  <tr key={`${row.eartag}-${row.eid}`}>
+                    <td>{row.eartag}</td>
+                    <td>{row.eid}</td>
+                    <td>{row.dateKey}</td>
+                    <td>{formatNumber(row.weightKg)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="empty-inline">
+            Upload the body-weight workbook and the EART/EID lookup file to see linked body weights here.
+          </div>
+        )}
+      </section>
+
+      <section className="panel notes">
+        <h3>Body Weight Tab</h3>
+        <ul>
+          <li>
+            <strong>Weight upload:</strong> accepts your body-weight workbook with <code>EID</code>,
+            <code>Date</code>, and <code>Weight (Kg)</code>.
+          </li>
+          <li>
+            <strong>Linking:</strong> the body-weight <code>EID</code> is matched to the lookup-file
+            <code>EID</code>, and the displayed cow identifier is the matching <code>EART</code>.
+          </li>
+          <li>
+            <strong>Latest weights:</strong> the table shows the most recent linked weight for each cow.
+          </li>
+        </ul>
+      </section>
+        </>
+      )}
     </main>
   );
 }
@@ -757,6 +907,31 @@ function mapLookupRow(row) {
   return { transponder, cowId };
 }
 
+function mapWeightRow(row) {
+  const eid = String(row.EID || row.eid || "").trim();
+  const rawDate = row.Date || row.date || "";
+  const rawWeight = row["Weight (Kg)"] || row["Weight (kg)"] || row.weight || row.Weight || "";
+
+  if (!eid || rawDate === "" || rawWeight === "") {
+    return null;
+  }
+
+  const timestamp = new Date(rawDate);
+  const weightKg = Number.parseFloat(rawWeight);
+
+  if (Number.isNaN(timestamp.getTime()) || Number.isNaN(weightKg)) {
+    return null;
+  }
+
+  return {
+    eid,
+    timestamp,
+    dateKey: toDateKey(timestamp),
+    weightKg,
+    eartag: eid,
+  };
+}
+
 function buildMappingLookup(mappingRows) {
   return mappingRows.reduce((lookup, row) => {
     lookup.set(row.transponder, row.cowId);
@@ -768,6 +943,13 @@ function enrichRows(rows, mappingLookup) {
   return rows.map((row) => ({
     ...row,
     eartag: mappingLookup.get(row.transponder) || row.transponder || "Unknown",
+  }));
+}
+
+function enrichWeightRows(rows, mappingLookup) {
+  return rows.map((row) => ({
+    ...row,
+    eartag: mappingLookup.get(row.eid) || row.eid || "Unknown",
   }));
 }
 
@@ -1162,6 +1344,19 @@ function buildTrackedCowList(rows) {
   });
 
   return Array.from(grouped.values()).sort((a, b) => String(a.eartag).localeCompare(String(b.eartag)));
+}
+
+function buildLatestWeights(rows) {
+  const latestByCow = new Map();
+
+  rows.forEach((row) => {
+    const current = latestByCow.get(row.eartag);
+    if (!current || row.timestamp > current.timestamp) {
+      latestByCow.set(row.eartag, row);
+    }
+  });
+
+  return Array.from(latestByCow.values()).sort((a, b) => b.timestamp - a.timestamp);
 }
 
 function buildDailyCowReportRows(rows, getReportDateKey, intakeBasis, intakeUnitLabel) {

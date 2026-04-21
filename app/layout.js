@@ -1,8 +1,8 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Intake Plotter",
-  description: "Upload CSV intake files and plot daily, range, and weekly summaries.",
+  title: "Cow Intake and Body Weight Visualizer",
+  description: "Upload intake and body-weight files, link EID to EART, and review cow trends.",
 };
 
 export default function RootLayout({ children }) {
