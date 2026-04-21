@@ -390,9 +390,24 @@ select:focus {
   margin-bottom: 18px;
 }
 
+.weight-chart-controls {
+  margin-bottom: 18px;
+}
+
 .cow-picker-copy {
   color: var(--muted);
   margin-bottom: 12px;
+}
+
+.inline-note {
+  min-height: 50px;
+  border: 1px solid rgba(24, 69, 59, 0.12);
+  border-radius: 14px;
+  padding: 13px 14px;
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--text);
+  display: flex;
+  align-items: center;
 }
 
 .cow-chip-grid {

@@ -10,6 +10,9 @@ const AGGREGATE_PLOT_MODE = "aggregate";
 const PER_COW_PLOT_MODE = "per-cow";
 const AS_FED_MODE = "as-fed";
 const DMI_MODE = "dmi";
+const WEIGHT_PLOT_COW_MODE = "cow";
+const WEIGHT_PLOT_TREATMENT_MODE = "treatment";
+const ALL_TREATMENTS = "all-treatments";
 const UNLIMITED_COLOR = "#17594a";
 const STOLEN_COLOR = "#b14f1f";
 const COW_COLORS = ["#17594a", "#9f3d1f", "#1f4e79", "#7a4ea3"];
@@ -27,6 +30,11 @@ export default function Page() {
   const [rows, setRows] = useState([]);
   const [mappingRows, setMappingRows] = useState([]);
   const [weightRows, setWeightRows] = useState([]);
+  const [treatmentRows, setTreatmentRows] = useState([]);
+  const [selectedWeightEartag, setSelectedWeightEartag] = useState("");
+  const [selectedTreatment, setSelectedTreatment] = useState(ALL_TREATMENTS);
+  const [showOnlyTreatmentCows, setShowOnlyTreatmentCows] = useState(false);
+  const [weightPlotMode, setWeightPlotMode] = useState(WEIGHT_PLOT_COW_MODE);
   const [unitMode, setUnitMode] = useState("lbs");
   const [intakeBasis, setIntakeBasis] = useState(AS_FED_MODE);
   const [viewMode, setViewMode] = useState("day");
@@ -44,6 +52,8 @@ export default function Page() {
   const [summary, setSummary] = useState(emptySummary);
 
   const mappingByTransponder = useMemo(() => buildMappingLookup(mappingRows), [mappingRows]);
+  const bodyWeightLookup = useMemo(() => buildBodyWeightLookup(mappingRows), [mappingRows]);
+  const treatmentLookup = useMemo(() => buildTreatmentLookup(treatmentRows), [treatmentRows]);
   const enrichedRows = useMemo(() => enrichRows(rows, mappingByTransponder), [rows, mappingByTransponder]);
   const processedRows = useMemo(
     () => getProcessedRows(enrichedRows, unitMode, ignoreNegative, intakeBasis, dmByRoughage),
@@ -59,8 +69,39 @@ export default function Page() {
   const intakeUnitLabel = intakeBasis === DMI_MODE ? "kg DM" : "kg";
   const intakeLabelText = intakeBasis === DMI_MODE ? "Dry Matter Intake" : "Intake";
   const trackedCows = useMemo(() => buildTrackedCowList(enrichedRows), [enrichedRows]);
-  const linkedWeightRows = useMemo(() => enrichWeightRows(weightRows, mappingByTransponder), [weightRows, mappingByTransponder]);
-  const latestWeights = useMemo(() => buildLatestWeights(linkedWeightRows), [linkedWeightRows]);
+  const linkedWeightRows = useMemo(
+    () => enrichWeightRows(weightRows, bodyWeightLookup, treatmentLookup),
+    [weightRows, bodyWeightLookup, treatmentLookup]
+  );
+  const treatmentOptions = useMemo(() => {
+    return Array.from(new Set(linkedWeightRows.map((row) => row.treatment).filter(Boolean))).sort((a, b) =>
+      String(a).localeCompare(String(b))
+    );
+  }, [linkedWeightRows]);
+  const displayedWeightRows = useMemo(
+    () => filterWeightRows(linkedWeightRows, showOnlyTreatmentCows, selectedTreatment),
+    [linkedWeightRows, showOnlyTreatmentCows, selectedTreatment]
+  );
+  const latestWeights = useMemo(() => buildLatestWeights(displayedWeightRows), [displayedWeightRows]);
+  const weightEartagOptions = useMemo(() => {
+    return Array.from(new Set(displayedWeightRows.map((row) => row.eartag).filter(Boolean))).sort((a, b) =>
+      String(a).localeCompare(String(b))
+    );
+  }, [displayedWeightRows]);
+  const weightChartData = useMemo(
+    () =>
+      weightPlotMode === WEIGHT_PLOT_TREATMENT_MODE
+        ? buildTreatmentAverageWeightChartData(displayedWeightRows, selectedTreatment)
+        : buildWeightChartData(displayedWeightRows, selectedWeightEartag),
+    [displayedWeightRows, selectedTreatment, selectedWeightEartag, weightPlotMode]
+  );
+  const weightMissingSummary = useMemo(
+    () =>
+      weightPlotMode === WEIGHT_PLOT_TREATMENT_MODE
+        ? buildTreatmentWeightSummary(displayedWeightRows, selectedTreatment)
+        : buildWeightMissingSummary(displayedWeightRows, selectedWeightEartag),
+    [displayedWeightRows, selectedTreatment, selectedWeightEartag, weightPlotMode]
+  );
   const midnightReportRows = useMemo(
     () => buildDailyCowReportRows(processedRows, getMidnightReportDateKey, intakeBasis, intakeUnitLabel),
     [processedRows, intakeBasis, intakeUnitLabel]
@@ -74,6 +115,26 @@ export default function Page() {
     const allowedCows = new Set(trackedCows.map((cow) => cow.eartag));
     setSelectedCows((current) => current.filter((cow) => allowedCows.has(cow)).slice(0, 4));
   }, [trackedCows]);
+
+  useEffect(() => {
+    if (!weightEartagOptions.length) {
+      setSelectedWeightEartag("");
+      return;
+    }
+    if (!selectedWeightEartag || !weightEartagOptions.includes(selectedWeightEartag)) {
+      setSelectedWeightEartag(weightEartagOptions[0]);
+    }
+  }, [weightEartagOptions, selectedWeightEartag]);
+
+  useEffect(() => {
+    if (!treatmentOptions.length) {
+      setSelectedTreatment(ALL_TREATMENTS);
+      return;
+    }
+    if (selectedTreatment !== ALL_TREATMENTS && !treatmentOptions.includes(selectedTreatment)) {
+      setSelectedTreatment(ALL_TREATMENTS);
+    }
+  }, [selectedTreatment, treatmentOptions]);
 
   useEffect(() => {
     setDmByRoughage((current) => {
@@ -213,12 +274,7 @@ export default function Page() {
     }
 
     try {
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: "array" });
-      const firstSheet = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[firstSheet];
-      const parsedRows = XLSX.utils
-        .sheet_to_json(sheet, { defval: "" })
+      const parsedRows = (await parseSpreadsheetFile(file))
         .map(mapWeightRow)
         .filter(Boolean)
         .sort((a, b) => b.timestamp - a.timestamp);
@@ -228,6 +284,26 @@ export default function Page() {
     } catch (error) {
       setWeightRows([]);
       setStatusText(`Error reading body-weight file: ${error.message}`);
+    }
+  }
+
+  async function handleTreatmentUpload(event) {
+    const [file] = event.target.files || [];
+    if (!file) {
+      return;
+    }
+
+    try {
+      const parsedRows = await parseSpreadsheetFile(file);
+      const parsedTreatments = parsedRows
+        .map(mapTreatmentRow)
+        .filter(Boolean);
+
+      setTreatmentRows(parsedTreatments);
+      setStatusText(`Loaded ${parsedTreatments.length} treatment assignments from ${file.name}.`);
+    } catch (error) {
+      setTreatmentRows([]);
+      setStatusText(`Error reading treatment file: ${error.message}`);
     }
   }
 
@@ -271,6 +347,46 @@ export default function Page() {
     link.remove();
     URL.revokeObjectURL(url);
     setStatusText(`Downloaded ${reportName} (${intakeLabelText}) with ${reportRows.length} cow-day rows.`);
+  }
+
+  function handleDownloadWeightsCsv() {
+    if (!displayedWeightRows.length) {
+      setStatusText("Upload body-weight rows first so the app can generate the Body Weights CSV.");
+      return;
+    }
+
+    const exportRows = displayedWeightRows.map((row) => ({
+      eartag: row.eartag,
+      eid: row.linkedEid || row.eid || "",
+      transid: row.transId || "",
+      treatment: row.treatment || "",
+      identifier_used_in_file: row.eid || "",
+      identifier_type: row.identifierType || "",
+      date: row.dateKey,
+      weight_kg: formatNumber(row.weightKg),
+    }));
+
+    const csv = toCsv(exportRows, [
+      "eartag",
+      "eid",
+      "transid",
+      "treatment",
+      "identifier_used_in_file",
+      "identifier_type",
+      "date",
+      "weight_kg",
+    ]);
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "body_weights_table.csv";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setStatusText(`Downloaded Body Weights CSV with ${displayedWeightRows.length} rows.`);
   }
 
   return (
@@ -609,22 +725,67 @@ export default function Page() {
             <span>Upload transponder to eartag lookup</span>
             <input type="file" accept=".csv,text/csv" onChange={handleMappingUpload} />
           </label>
+
+          <label className="field field-wide">
+            <span>Upload EART to treatment file</span>
+            <input type="file" accept=".xls,.xlsx,.csv,text/csv" onChange={handleTreatmentUpload} />
+          </label>
+
+          <label className="field">
+            <span>Body-weight plot</span>
+            <select value={weightPlotMode} onChange={(event) => setWeightPlotMode(event.target.value)}>
+              <option value={WEIGHT_PLOT_COW_MODE}>Selected cow history</option>
+              <option value={WEIGHT_PLOT_TREATMENT_MODE}>Treatment averages</option>
+            </select>
+          </label>
+
+          <label className="field">
+            <span>Treatment filter</span>
+            <select value={selectedTreatment} onChange={(event) => setSelectedTreatment(event.target.value)}>
+              <option value={ALL_TREATMENTS}>All treatments</option>
+              {treatmentOptions.map((treatment) => (
+                <option key={treatment} value={treatment}>
+                  {treatment}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="field checkbox-field">
+            <input
+              type="checkbox"
+              checked={showOnlyTreatmentCows}
+              onChange={(event) => setShowOnlyTreatmentCows(event.target.checked)}
+            />
+            <span>Only show cows listed in the treatment file</span>
+          </label>
         </div>
 
         <p className="status">{statusText}</p>
         <p className="substatus">
-          Weight rows: <strong>{linkedWeightRows.length}</strong>
+          Weight rows: <strong>{displayedWeightRows.length}</strong>
           {" | "}
           Cows with weights: <strong>{latestWeights.length}</strong>
           {" | "}
           Mapping rows: <strong>{mappingRows.length}</strong>
+          {" | "}
+          Treatment rows: <strong>{treatmentRows.length}</strong>
         </p>
+        <p className="substatus">
+          Note: the same cow can show two different body-weight rows on the same day when one record
+          is saved under <strong>EID</strong> and another is saved under <strong>TransID</strong>.
+        </p>
+        <div className="action-row">
+          <button className="action-button" type="button" onClick={handleDownloadWeightsCsv}>
+            Download Body Weights CSV
+          </button>
+        </div>
       </section>
 
       <section className="stats-grid">
         <article className="panel stat-card">
           <span className="stat-label">Weight rows loaded</span>
-          <strong>{linkedWeightRows.length.toLocaleString()}</strong>
+          <strong>{displayedWeightRows.length.toLocaleString()}</strong>
         </article>
         <article className="panel stat-card">
           <span className="stat-label">Cows linked</span>
@@ -640,30 +801,85 @@ export default function Page() {
         </article>
       </section>
 
+      <section className="panel chart-panel">
+        <div className="chart-header">
+          <div>
+            <p className="eyebrow">Body Weight Plot</p>
+            <h2>{weightChartData.title}</h2>
+          </div>
+        </div>
+
+        <div className="control-grid weight-chart-controls">
+          {weightPlotMode === WEIGHT_PLOT_COW_MODE ? (
+            <label className="field">
+              <span>Eartag</span>
+              <select
+                value={selectedWeightEartag}
+                onChange={(event) => setSelectedWeightEartag(event.target.value)}
+                disabled={!weightEartagOptions.length}
+              >
+                {weightEartagOptions.map((eartag) => (
+                  <option key={eartag} value={eartag}>
+                    {eartag}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <div className="field">
+              <span>Treatment average view</span>
+              <div className="inline-note">
+                {selectedTreatment === ALL_TREATMENTS
+                  ? "Showing one average body-weight line per treatment."
+                  : `Showing average body weight for treatment ${selectedTreatment}.`}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <p className="substatus">
+          {weightMissingSummary.message}
+        </p>
+
+        <div className="chart-container">
+          {weightChartData.points.length ? (
+            <Chart chartData={weightChartData} />
+          ) : (
+            <div className="empty-state">
+              {weightChartData.emptyMessage || "Upload body-weight rows to see a body-weight plot."}
+            </div>
+          )}
+        </div>
+      </section>
+
       <section className="panel tracked-panel">
         <div className="tracked-header">
           <div>
             <p className="eyebrow">Body Weights</p>
-            <h3>Latest linked body weights by eartag</h3>
+            <h3>Linked body-weight history by eartag</h3>
           </div>
-          <p className="tracked-count">{latestWeights.length} cows</p>
+          <p className="tracked-count">{displayedWeightRows.length} rows</p>
         </div>
-        {latestWeights.length ? (
+        {displayedWeightRows.length ? (
           <div className="weights-table-wrap">
             <table className="weights-table">
               <thead>
                 <tr>
                   <th>Eartag</th>
                   <th>EID</th>
+                  <th>TransID</th>
+                  <th>Treatment</th>
                   <th>Date</th>
                   <th>Weight (kg)</th>
                 </tr>
               </thead>
               <tbody>
-                {latestWeights.map((row) => (
-                  <tr key={`${row.eartag}-${row.eid}`}>
+                {displayedWeightRows.map((row, index) => (
+                  <tr key={`${row.eartag}-${row.eid}-${row.dateKey}-${index}`}>
                     <td>{row.eartag}</td>
-                    <td>{row.eid}</td>
+                    <td>{row.linkedEid || row.eid}</td>
+                    <td>{row.transId || "-"}</td>
+                    <td>{row.treatment || "-"}</td>
                     <td>{row.dateKey}</td>
                     <td>{formatNumber(row.weightKg)}</td>
                   </tr>
@@ -687,10 +903,28 @@ export default function Page() {
           </li>
           <li>
             <strong>Linking:</strong> the body-weight <code>EID</code> is matched to the lookup-file
-            <code>EID</code>, and the displayed cow identifier is the matching <code>EART</code>.
+            <code>EID</code>, and the table shows the matching <code>EART</code>, <code>EID</code>,
+            and <code>TransID</code> for each cow.
           </li>
           <li>
-            <strong>Latest weights:</strong> the table shows the most recent linked weight for each cow.
+            <strong>Treatment file:</strong> upload a sheet with <code>EART</code> and
+            <code>Treatment</code> to filter the Body Weights tab and calculate treatment averages.
+          </li>
+          <li>
+            <strong>Treatment filter:</strong> you can show only cows listed in the treatment file,
+            or narrow the plot, table, and CSV export to one treatment.
+          </li>
+          <li>
+            <strong>Weight history:</strong> repeated rows for the same cow are preserved so you can
+            see each weight on each recorded date.
+          </li>
+          <li>
+            <strong>Duplicate-looking weights:</strong> the same cow may appear twice on one date if
+            one weight was recorded under <code>EID</code> and another under <code>TransID</code>.
+          </li>
+          <li>
+            <strong>Weight plot:</strong> pick an eartag to plot that cow&apos;s weight across the dates
+            available in the uploaded file, or switch to treatment averages to compare treatments by day.
           </li>
         </ul>
       </section>
@@ -707,7 +941,14 @@ function Chart({ chartData }) {
   const margin = { top: 24, right: 28, bottom: 70, left: 72 };
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
-  const maxValue = Math.max(...points.flatMap((point) => series.map((item) => point.values[item.key] || 0)), 0);
+  const maxValue = Math.max(
+    ...points.flatMap((point) =>
+      series
+        .map((item) => point.values[item.key])
+        .filter((value) => value !== null && value !== undefined)
+    ),
+    0
+  );
   const yMax = maxValue === 0 ? 1 : maxValue * 1.1;
   const xStep = points.length > 1 ? innerWidth / (points.length - 1) : 0;
   const yTicks = Array.from({ length: 6 }, (_, index) => {
@@ -749,7 +990,11 @@ function Chart({ chartData }) {
       {series.map((item) =>
         points.map((point, index) => {
           const x = margin.left + (points.length > 1 ? xStep * index : innerWidth / 2);
-          const y = margin.top + innerHeight - ((point.values[item.key] || 0) / yMax) * innerHeight;
+          const value = point.values[item.key];
+          if (value === null || value === undefined) {
+            return null;
+          }
+          const y = margin.top + innerHeight - (value / yMax) * innerHeight;
           return (
             <circle
               key={`${item.key}-${point.label}-${index}`}
@@ -844,6 +1089,19 @@ function parseCsv(text) {
   });
 }
 
+async function parseSpreadsheetFile(file) {
+  if (file.name.toLowerCase().endsWith(".csv")) {
+    const text = await file.text();
+    return parseCsv(text);
+  }
+
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: "array" });
+  const firstSheet = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[firstSheet];
+  return XLSX.utils.sheet_to_json(sheet, { defval: "" });
+}
+
 function mapIntakeRow(row, sourceFile) {
   const startTime = row["Start time"];
   const intakeRaw = Number.parseFloat(row["Intake (kg)"]);
@@ -874,11 +1132,11 @@ function mapIntakeRow(row, sourceFile) {
 }
 
 function mapLookupRow(row) {
-  const transponder = String(
-    row.Transponder ||
-      row.transponder ||
-      row.EID ||
+  const eid = String(
+    row.EID ||
       row.eid ||
+      row.Transponder ||
+      row.transponder ||
       row.TransponderID ||
       row["Transponder ID"] ||
       row.Tag ||
@@ -900,28 +1158,49 @@ function mapLookupRow(row) {
       ""
   ).trim();
 
-  if (!transponder || !cowId) {
+  const transId = String(
+    row.TransID ||
+      row.trans_id ||
+      row["Trans ID"] ||
+      row["TransId"] ||
+      ""
+  ).trim();
+
+  if (!eid || !cowId) {
     return null;
   }
 
-  return { transponder, cowId };
+  return {
+    transponder: eid,
+    cowId,
+    eid,
+    transId,
+  };
 }
 
 function mapWeightRow(row) {
-  const eid = String(row.EID || row.eid || "").trim();
-  const rawDate = row.timestamp || row.Timestamp || row.Date || row.date || "";
+  const normalizedRow = normalizeRowKeys(row);
+  const eid = String(
+    normalizedRow.eid ||
+      normalizedRow.transid ||
+      normalizedRow["trans id"] ||
+      normalizedRow.transid ||
+      ""
+  ).trim();
+  const rawDate =
+    normalizedRow.timestamp ||
+    normalizedRow.date ||
+    "";
   const rawWeight =
-    row["Weight (Kg)"] ||
-    row["Weight (kg)"] ||
-    row.weight ||
-    row.Weight ||
+    normalizedRow["weight (kg)"] ||
+    normalizedRow.weight ||
     "";
 
   if (!eid || rawDate === "" || rawWeight === "") {
     return null;
   }
 
-  const timestamp = rawDate instanceof Date ? rawDate : new Date(rawDate);
+  const timestamp = parseSpreadsheetDate(rawDate);
   const weightKg = Number.parseFloat(rawWeight);
 
   if (Number.isNaN(timestamp.getTime()) || Number.isNaN(weightKg)) {
@@ -937,9 +1216,103 @@ function mapWeightRow(row) {
   };
 }
 
+function mapTreatmentRow(row) {
+  const normalizedRow = normalizeRowKeys(row);
+  const eartag = String(
+    normalizedRow.eart ||
+      normalizedRow.eartag ||
+      normalizedRow["ear tag"] ||
+      normalizedRow.tag ||
+      ""
+  ).trim();
+  const treatment = String(
+    normalizedRow.treatment ||
+      normalizedRow.trt ||
+      normalizedRow.group ||
+      ""
+  ).trim();
+
+  if (!eartag || !treatment) {
+    return null;
+  }
+
+  return {
+    eartag,
+    treatment,
+  };
+}
+
+function normalizeRowKeys(row) {
+  return Object.entries(row).reduce((accumulator, [key, value]) => {
+    accumulator[String(key).trim().toLowerCase()] = value;
+    return accumulator;
+  }, {});
+}
+
+function parseSpreadsheetDate(value) {
+  if (value instanceof Date) {
+    return new Date(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate());
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+    const converted = new Date(excelEpoch.getTime() + value * 24 * 60 * 60 * 1000);
+    return new Date(converted.getUTCFullYear(), converted.getUTCMonth(), converted.getUTCDate());
+  }
+
+  const text = String(value).trim();
+
+  const isoMatch = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoMatch) {
+    const [, year, month, day] = isoMatch;
+    return new Date(Number(year), Number(month) - 1, Number(day));
+  }
+
+  const usMatch = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (usMatch) {
+    const [, month, day, year] = usMatch;
+    return new Date(Number(year), Number(month) - 1, Number(day));
+  }
+
+  return new Date(text);
+}
+
 function buildMappingLookup(mappingRows) {
   return mappingRows.reduce((lookup, row) => {
-    lookup.set(row.transponder, row.cowId);
+    lookup.set(row.transponder, {
+      eartag: row.cowId,
+      eid: row.eid || row.transponder,
+      transId: row.transId || "",
+    });
+    return lookup;
+  }, new Map());
+}
+
+function buildBodyWeightLookup(mappingRows) {
+  return mappingRows.reduce(
+    (lookup, row) => {
+      const payload = {
+        eartag: row.cowId,
+        eid: row.eid || row.transponder,
+        transId: row.transId || "",
+      };
+
+      if (payload.eid) {
+        lookup.byEid.set(payload.eid, payload);
+      }
+      if (payload.transId) {
+        lookup.byTransId.set(payload.transId, payload);
+      }
+
+      return lookup;
+    },
+    { byEid: new Map(), byTransId: new Map() }
+  );
+}
+
+function buildTreatmentLookup(treatmentRows) {
+  return treatmentRows.reduce((lookup, row) => {
+    lookup.set(String(row.eartag), row.treatment);
     return lookup;
   }, new Map());
 }
@@ -947,15 +1320,46 @@ function buildMappingLookup(mappingRows) {
 function enrichRows(rows, mappingLookup) {
   return rows.map((row) => ({
     ...row,
-    eartag: mappingLookup.get(row.transponder) || row.transponder || "Unknown",
+    eartag: mappingLookup.get(row.transponder)?.eartag || row.transponder || "Unknown",
   }));
 }
 
-function enrichWeightRows(rows, mappingLookup) {
-  return rows.map((row) => ({
-    ...row,
-    eartag: mappingLookup.get(row.eid) || row.eid || "Unknown",
-  }));
+function enrichWeightRows(rows, bodyWeightLookup, treatmentLookup) {
+  return rows
+    .map((row) => {
+      const isTransId = String(row.eid || "").startsWith("98");
+      const lookupMatch = isTransId
+        ? bodyWeightLookup.byTransId.get(row.eid) || bodyWeightLookup.byEid.get(row.eid)
+        : bodyWeightLookup.byEid.get(row.eid) || bodyWeightLookup.byTransId.get(row.eid);
+
+      return {
+        ...row,
+        identifierType: isTransId ? "transid" : "eid",
+        eartag: lookupMatch?.eartag || row.eid || "Unknown",
+        linkedEid: lookupMatch?.eid || (isTransId ? "" : row.eid) || "Unknown",
+        transId: lookupMatch?.transId || (isTransId ? row.eid : ""),
+        treatment: treatmentLookup.get(String(lookupMatch?.eartag || row.eid || "Unknown")) || "",
+      };
+    })
+    .sort((a, b) => {
+      const cowCompare = String(a.eartag).localeCompare(String(b.eartag));
+      if (cowCompare !== 0) {
+        return cowCompare;
+      }
+      return b.timestamp - a.timestamp;
+    });
+}
+
+function filterWeightRows(rows, showOnlyTreatmentCows, selectedTreatment) {
+  return rows.filter((row) => {
+    if (showOnlyTreatmentCows && !row.treatment) {
+      return false;
+    }
+    if (selectedTreatment !== ALL_TREATMENTS && row.treatment !== selectedTreatment) {
+      return false;
+    }
+    return true;
+  });
 }
 
 function getProcessedRows(rows, unitMode, ignoreNegative, intakeBasis, dmByRoughage) {
@@ -1291,6 +1695,178 @@ function getCowSeriesKey(cow, type) {
   return `${cow}__${type}`;
 }
 
+function buildWeightChartData(rows, selectedEartag) {
+  if (!selectedEartag) {
+    return {
+      title: "Select an eartag",
+      status: "Choose a cow to view its body-weight history.",
+      emptyMessage: "Upload body-weight rows and choose an eartag to plot weight by date.",
+      unitLabel: "kg",
+      series: [],
+      points: [],
+    };
+  }
+
+  const points = Array.from(
+    groupRowsBy(
+      rows.filter((row) => row.eartag === selectedEartag),
+      (row) => row.dateKey
+    ).entries()
+  )
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([label, dayRows]) => {
+      const eidRow = dayRows.find((row) => row.identifierType === "eid");
+      const transIdRow = dayRows.find((row) => row.identifierType === "transid");
+      return {
+        label,
+        values: {
+          eid_weight: eidRow ? eidRow.weightKg : null,
+          transid_weight: transIdRow ? transIdRow.weightKg : null,
+        },
+      };
+    });
+
+  return {
+    title: `Body weight history: ${selectedEartag}`,
+    status: `Showing available body-weight dates for eartag ${selectedEartag}.`,
+    emptyMessage: "No body-weight rows were found for the selected eartag.",
+    unitLabel: "kg",
+    series: [
+      {
+        key: "eid_weight",
+        label: "EID weight",
+        color: UNLIMITED_COLOR,
+        dashed: false,
+      },
+      {
+        key: "transid_weight",
+        label: "TransID weight",
+        color: "#9f3d1f",
+        dashed: false,
+      },
+    ],
+    points,
+  };
+}
+
+function buildTreatmentAverageWeightChartData(rows, selectedTreatment) {
+  const treatmentRows = rows.filter((row) =>
+    selectedTreatment === ALL_TREATMENTS ? Boolean(row.treatment) : row.treatment === selectedTreatment
+  );
+
+  if (!treatmentRows.length) {
+    return {
+      title: "Treatment averages",
+      status: "Upload a treatment file and matching body weights to compare average body weight by treatment.",
+      emptyMessage: "No treated cows were found for the current treatment filters.",
+      unitLabel: "kg",
+      series: [],
+      points: [],
+    };
+  }
+
+  const treatments = Array.from(new Set(treatmentRows.map((row) => row.treatment))).sort((a, b) =>
+    String(a).localeCompare(String(b))
+  );
+  const dailyTreatmentMeans = new Map();
+
+  treatments.forEach((treatment) => {
+    const rowsForTreatment = treatmentRows.filter((row) => row.treatment === treatment);
+    const byDay = groupRowsBy(rowsForTreatment, (row) => row.dateKey);
+    byDay.forEach((dayRows, dateKey) => {
+      const byCow = groupRowsBy(dayRows, (row) => row.eartag);
+      const cowMeans = Array.from(byCow.values()).map((cowRows) => {
+        return cowRows.reduce((sum, row) => sum + row.weightKg, 0) / cowRows.length;
+      });
+      const dateBucket = dailyTreatmentMeans.get(dateKey) || {};
+      dateBucket[treatment] = cowMeans.reduce((sum, value) => sum + value, 0) / (cowMeans.length || 1);
+      dailyTreatmentMeans.set(dateKey, dateBucket);
+    });
+  });
+
+  const points = Array.from(dailyTreatmentMeans.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([label, values]) => ({
+      label,
+      values,
+    }));
+
+  return {
+    title:
+      selectedTreatment === ALL_TREATMENTS
+        ? "Average body weight by treatment"
+        : `Average body weight: treatment ${selectedTreatment}`,
+    status:
+      selectedTreatment === ALL_TREATMENTS
+        ? "Showing one average body-weight line per treatment using cows with uploaded treatment assignments."
+        : `Showing average daily body weight for treatment ${selectedTreatment}.`,
+    emptyMessage: "No treatment averages could be calculated for the current filter.",
+    unitLabel: "kg",
+    series: treatments.map((treatment, index) => ({
+      key: treatment,
+      label: `Treatment ${treatment}`,
+      color: COW_COLORS[index % COW_COLORS.length],
+      dashed: false,
+    })),
+    points,
+  };
+}
+
+function buildWeightMissingSummary(rows, selectedEartag) {
+  if (!rows.length || !selectedEartag) {
+    return {
+      message: "Upload body-weight rows and choose an eartag to see missing-day counts.",
+    };
+  }
+
+  const sortedRows = [...rows].sort((a, b) => a.timestamp - b.timestamp);
+  const firstDate = sortedRows[0].dateKey;
+  const lastDate = sortedRows[sortedRows.length - 1].dateKey;
+  const selectedCowDates = new Set(
+    rows.filter((row) => row.eartag === selectedEartag).map((row) => row.dateKey)
+  );
+
+  let totalDays = 0;
+  let missingDays = 0;
+  const current = new Date(`${firstDate}T00:00:00`);
+  const end = new Date(`${lastDate}T00:00:00`);
+
+  while (current <= end) {
+    totalDays += 1;
+    const dateKey = toDateKey(current);
+    if (!selectedCowDates.has(dateKey)) {
+      missingDays += 1;
+    }
+    current.setDate(current.getDate() + 1);
+  }
+
+  return {
+    message: `${selectedEartag} is missing body weights on ${missingDays} day(s) across ${firstDate} to ${lastDate} (${totalDays} total days in the uploaded BW date range).`,
+  };
+}
+
+function buildTreatmentWeightSummary(rows, selectedTreatment) {
+  const treatmentRows = rows.filter((row) =>
+    selectedTreatment === ALL_TREATMENTS ? Boolean(row.treatment) : row.treatment === selectedTreatment
+  );
+
+  if (!treatmentRows.length) {
+    return {
+      message: "Upload a treatment file and matching body weights to see treatment-average summaries.",
+    };
+  }
+
+  const cows = new Set(treatmentRows.map((row) => row.eartag));
+  const dates = new Set(treatmentRows.map((row) => row.dateKey));
+
+  return {
+    message:
+      selectedTreatment === ALL_TREATMENTS
+        ? `Treatment averages are using ${cows.size} cows across ${dates.size} recorded date(s).`
+        : `Treatment ${selectedTreatment} includes ${cows.size} cow(s) with body weights across ${dates.size} recorded date(s).`,
+  };
+}
+
 function summarizeByDay(rows, averagePerCow) {
   const summary = new Map();
 
@@ -1468,9 +2044,14 @@ function buildPath(points, key, margin, innerWidth, innerHeight, yMax) {
   return points
     .map((point, index) => {
       const x = margin.left + (points.length > 1 ? (innerWidth / (points.length - 1)) * index : innerWidth / 2);
-      const y = margin.top + innerHeight - (((point.values && point.values[key]) || 0) / yMax) * innerHeight;
+      const value = point.values && point.values[key];
+      if (value === null || value === undefined) {
+        return null;
+      }
+      const y = margin.top + innerHeight - (value / yMax) * innerHeight;
       return `${index === 0 ? "M" : "L"} ${x} ${y}`;
     })
+    .filter(Boolean)
     .join(" ");
 }
 
