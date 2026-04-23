@@ -177,12 +177,52 @@ select:focus {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
+  align-items: flex-end;
 }
 
 .dm-panel {
   margin-top: 18px;
   padding-top: 18px;
   border-top: 1px solid rgba(36, 37, 28, 0.08);
+}
+
+.treatment-builder {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(36, 37, 28, 0.08);
+}
+
+.treatment-builder-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.treatment-builder-grid {
+  margin-top: 14px;
+}
+
+.treatment-chip-grid {
+  margin-top: 10px;
+  max-height: 180px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.assignment-table-wrap {
+  margin-top: 18px;
+  overflow-x: auto;
+}
+
+.table-action {
+  border: 1px solid rgba(24, 69, 59, 0.16);
+  background: #ffffff;
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 8px 12px;
+}
+
+.table-action:hover {
+  background: rgba(24, 69, 59, 0.06);
 }
 
 .dm-copy {
@@ -220,6 +260,10 @@ select:focus {
 
 .action-button-secondary:hover {
   background: #4f7a6b;
+}
+
+.am-feeding-field {
+  min-width: 200px;
 }
 
 .stats-grid {
@@ -367,7 +411,14 @@ select:focus {
       90deg,
       currentColor 0 10px,
       transparent 10px 16px
-    ) !important;
+      ) !important;
+}
+
+.legend-swatch-svg {
+  width: 38px;
+  height: 16px;
+  overflow: visible;
+  flex: 0 0 auto;
 }
 
 .chart-container {
@@ -464,9 +515,12 @@ select:focus {
   stroke-linejoin: round;
 }
 
+.series-line-halo {
+  opacity: 0.95;
+}
+
 .point {
-  stroke: #fffdf8;
-  stroke-width: 2;
+  paint-order: stroke;
 }
 
 .notes {
@@ -516,6 +570,7 @@ select:focus {
 
   .action-row {
     flex-direction: column;
+    align-items: stretch;
   }
 
   .dm-grid,

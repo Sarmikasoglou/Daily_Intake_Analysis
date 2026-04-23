@@ -15,7 +15,9 @@ const WEIGHT_PLOT_TREATMENT_MODE = "treatment";
 const ALL_TREATMENTS = "all-treatments";
 const UNLIMITED_COLOR = "#17594a";
 const STOLEN_COLOR = "#b14f1f";
-const COW_COLORS = ["#17594a", "#9f3d1f", "#1f4e79", "#7a4ea3"];
+const COW_COLORS = ["#17594a", "#a34724", "#1d5d90", "#7b4ab0", "#866000", "#8f2d56"];
+const COW_MARKERS = ["circle", "square", "diamond", "triangle"];
+const STOLEN_DASH_PATTERNS = ["10 6", "5 4", "14 5 3 5", "2 5"];
 
 const emptySummary = {
   rowsLoaded: "0",
@@ -30,9 +32,11 @@ export default function Page() {
   const [rows, setRows] = useState([]);
   const [mappingRows, setMappingRows] = useState([]);
   const [weightRows, setWeightRows] = useState([]);
-  const [treatmentRows, setTreatmentRows] = useState([]);
+  const [uploadedTreatmentRows, setUploadedTreatmentRows] = useState([]);
+  const [manualTreatmentRows, setManualTreatmentRows] = useState([]);
   const [selectedWeightEartag, setSelectedWeightEartag] = useState("");
   const [selectedTreatment, setSelectedTreatment] = useState(ALL_TREATMENTS);
+  const [selectedIntakeTreatment, setSelectedIntakeTreatment] = useState(ALL_TREATMENTS);
   const [showOnlyTreatmentCows, setShowOnlyTreatmentCows] = useState(false);
   const [weightPlotMode, setWeightPlotMode] = useState(WEIGHT_PLOT_COW_MODE);
   const [unitMode, setUnitMode] = useState("lbs");
@@ -43,6 +47,11 @@ export default function Page() {
   const [selectedCows, setSelectedCows] = useState([]);
   const [dmByRoughage, setDmByRoughage] = useState({});
   const [ignoreNegative, setIgnoreNegative] = useState(true);
+  const [amFeedingStartTime, setAmFeedingStartTime] = useState("06:00");
+  const [manualTreatmentName, setManualTreatmentName] = useState("");
+  const [manualTreatmentStartDate, setManualTreatmentStartDate] = useState("");
+  const [manualTreatmentEndDate, setManualTreatmentEndDate] = useState("");
+  const [manualTreatmentCowSelection, setManualTreatmentCowSelection] = useState([]);
   const [dayInput, setDayInput] = useState("");
   const [rangeStartInput, setRangeStartInput] = useState("");
   const [rangeEndInput, setRangeEndInput] = useState("");
@@ -51,17 +60,28 @@ export default function Page() {
   const [chartData, setChartData] = useState(null);
   const [summary, setSummary] = useState(emptySummary);
 
+  const treatmentRows = useMemo(
+    () => [...uploadedTreatmentRows, ...manualTreatmentRows],
+    [uploadedTreatmentRows, manualTreatmentRows]
+  );
   const mappingByTransponder = useMemo(() => buildMappingLookup(mappingRows), [mappingRows]);
   const bodyWeightLookup = useMemo(() => buildBodyWeightLookup(mappingRows), [mappingRows]);
   const treatmentLookup = useMemo(() => buildTreatmentLookup(treatmentRows), [treatmentRows]);
-  const enrichedRows = useMemo(() => enrichRows(rows, mappingByTransponder), [rows, mappingByTransponder]);
+  const enrichedRows = useMemo(
+    () => enrichRows(rows, mappingByTransponder, treatmentLookup),
+    [rows, mappingByTransponder, treatmentLookup]
+  );
   const processedRows = useMemo(
     () => getProcessedRows(enrichedRows, unitMode, ignoreNegative, intakeBasis, dmByRoughage),
     [enrichedRows, unitMode, ignoreNegative, intakeBasis, dmByRoughage]
   );
+  const intakeTreatmentFilteredRows = useMemo(
+    () => filterRowsByAssignedTreatment(processedRows, selectedIntakeTreatment),
+    [processedRows, selectedIntakeTreatment]
+  );
   const filteredRows = useMemo(
-    () => filterRowsByScope(processedRows, analysisScope),
-    [processedRows, analysisScope]
+    () => filterRowsByScope(intakeTreatmentFilteredRows, analysisScope),
+    [intakeTreatmentFilteredRows, analysisScope]
   );
   const roughageOptions = useMemo(() => {
     return Array.from(new Set(rows.map((row) => row.roughageType).filter(Boolean))).sort();
@@ -78,6 +98,11 @@ export default function Page() {
       String(a).localeCompare(String(b))
     );
   }, [linkedWeightRows]);
+  const manualTreatmentCowOptions = useMemo(() => {
+    return Array.from(new Set(uploadedTreatmentRows.map((row) => row.eartag).filter(Boolean))).sort((a, b) =>
+      String(a).localeCompare(String(b))
+    );
+  }, [uploadedTreatmentRows]);
   const displayedWeightRows = useMemo(
     () => filterWeightRows(linkedWeightRows, showOnlyTreatmentCows, selectedTreatment),
     [linkedWeightRows, showOnlyTreatmentCows, selectedTreatment]
@@ -107,8 +132,14 @@ export default function Page() {
     [processedRows, intakeBasis, intakeUnitLabel]
   );
   const amFeedingReportRows = useMemo(
-    () => buildDailyCowReportRows(processedRows, getAmFeedingReportDateKey, intakeBasis, intakeUnitLabel),
-    [processedRows, intakeBasis, intakeUnitLabel]
+    () =>
+      buildDailyCowReportRows(
+        processedRows,
+        (timestamp) => getAmFeedingReportDateKey(timestamp, amFeedingStartTime),
+        intakeBasis,
+        intakeUnitLabel
+      ),
+    [processedRows, amFeedingStartTime, intakeBasis, intakeUnitLabel]
   );
 
   useEffect(() => {
@@ -129,12 +160,21 @@ export default function Page() {
   useEffect(() => {
     if (!treatmentOptions.length) {
       setSelectedTreatment(ALL_TREATMENTS);
+      setSelectedIntakeTreatment(ALL_TREATMENTS);
       return;
     }
     if (selectedTreatment !== ALL_TREATMENTS && !treatmentOptions.includes(selectedTreatment)) {
       setSelectedTreatment(ALL_TREATMENTS);
     }
-  }, [selectedTreatment, treatmentOptions]);
+    if (selectedIntakeTreatment !== ALL_TREATMENTS && !treatmentOptions.includes(selectedIntakeTreatment)) {
+      setSelectedIntakeTreatment(ALL_TREATMENTS);
+    }
+  }, [selectedTreatment, selectedIntakeTreatment, treatmentOptions]);
+
+  useEffect(() => {
+    const allowedCows = new Set(manualTreatmentCowOptions);
+    setManualTreatmentCowSelection((current) => current.filter((cow) => allowedCows.has(cow)));
+  }, [manualTreatmentCowOptions]);
 
   useEffect(() => {
     setDmByRoughage((current) => {
@@ -296,21 +336,77 @@ export default function Page() {
     try {
       const parsedRows = await parseSpreadsheetFile(file);
       const parsedTreatments = parsedRows
-        .map(mapTreatmentRow)
+        .map((row, index) => mapTreatmentRow(row, { source: "file", rowIndex: index }))
         .filter(Boolean);
 
-      setTreatmentRows(parsedTreatments);
+      setUploadedTreatmentRows(parsedTreatments);
       setStatusText(`Loaded ${parsedTreatments.length} treatment assignments from ${file.name}.`);
     } catch (error) {
-      setTreatmentRows([]);
+      setUploadedTreatmentRows([]);
       setStatusText(`Error reading treatment file: ${error.message}`);
     }
+  }
+
+  function toggleManualTreatmentCow(eartag) {
+    setManualTreatmentCowSelection((current) =>
+      current.includes(eartag) ? current.filter((cow) => cow !== eartag) : [...current, eartag]
+    );
+  }
+
+  function handleAddManualTreatmentAssignments() {
+    const treatment = manualTreatmentName.trim();
+    if (!manualTreatmentCowOptions.length) {
+      setStatusText("Upload the EART to treatment file first so manual treatments can use that cow list.");
+      return;
+    }
+    if (!treatment) {
+      setStatusText("Enter a treatment name before adding manual treatment assignments.");
+      return;
+    }
+    if (!manualTreatmentCowSelection.length) {
+      setStatusText("Pick at least one cow from the uploaded cow list before adding the treatment range.");
+      return;
+    }
+    if (
+      manualTreatmentStartDate &&
+      manualTreatmentEndDate &&
+      manualTreatmentStartDate.localeCompare(manualTreatmentEndDate) > 0
+    ) {
+      setStatusText("Treatment start date must be on or before the end date.");
+      return;
+    }
+
+    const newAssignments = manualTreatmentCowSelection.map((eartag, index) =>
+      createTreatmentAssignment({
+        eartag,
+        treatment,
+        startDate: manualTreatmentStartDate,
+        endDate: manualTreatmentEndDate,
+        source: "manual",
+        rowIndex: manualTreatmentRows.length + index,
+      })
+    );
+
+    setManualTreatmentRows((current) => [...current, ...newAssignments]);
+    setManualTreatmentCowSelection([]);
+    setManualTreatmentName("");
+    setManualTreatmentStartDate("");
+    setManualTreatmentEndDate("");
+    setStatusText(
+      `Added ${newAssignments.length} manual treatment assignment(s) for ${treatment}.`
+    );
+  }
+
+  function handleRemoveManualTreatmentAssignment(assignmentId) {
+    setManualTreatmentRows((current) => current.filter((row) => row.id !== assignmentId));
   }
 
   function handleDownloadReport(reportType) {
     const reportRows = reportType === "am-feeding" ? amFeedingReportRows : midnightReportRows;
     const reportName =
-      reportType === "am-feeding" ? "Intake from AM Feeding" : "Intake from Midnight";
+      reportType === "am-feeding"
+        ? `Intake from AM Feeding (${getAmFeedingWindowLabel(amFeedingStartTime)})`
+        : "Intake from Midnight";
     const fileName =
       reportType === "am-feeding"
         ? `intake_from_am_feeding_${intakeBasis === DMI_MODE ? "dmi" : "as_fed"}.csv`
@@ -327,7 +423,8 @@ export default function Page() {
         "report_day",
         "eartag",
         "transponder_eid",
-        "roughage_types",
+        "roughage_types_unlimited",
+        "roughage_types_stolen",
         "intake_basis",
         "unlimited_intake",
         "stolen_intake",
@@ -433,6 +530,11 @@ export default function Page() {
             <input type="file" accept=".csv,text/csv" onChange={handleMappingUpload} />
           </label>
 
+          <label className="field field-wide">
+            <span>Upload EART to treatment file</span>
+            <input type="file" accept=".xls,.xlsx,.csv,text/csv" onChange={handleTreatmentUpload} />
+          </label>
+
           <label className="field">
             <span>Source unit for intake values</span>
             <select value={unitMode} onChange={(event) => setUnitMode(event.target.value)}>
@@ -516,6 +618,131 @@ export default function Page() {
             />
             <span>Ignore negative intake values</span>
           </label>
+
+          <label className="field">
+            <span>Treatment filter</span>
+            <select value={selectedIntakeTreatment} onChange={(event) => setSelectedIntakeTreatment(event.target.value)}>
+              <option value={ALL_TREATMENTS}>All treatments</option>
+              {treatmentOptions.map((treatment) => (
+                <option key={`intake-treatment-${treatment}`} value={treatment}>
+                  {treatment}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="treatment-builder">
+          <div className="treatment-builder-header">
+            <div>
+              <strong>Intake treatment assignment</strong>
+              <p>
+                Upload a treatment file or manually assign a treatment to selected cows for an optional
+                date range.
+              </p>
+            </div>
+          </div>
+
+          {manualTreatmentCowOptions.length ? (
+            <>
+              <div className="control-grid treatment-builder-grid">
+                <label className="field">
+                  <span>Treatment name</span>
+                  <input
+                    type="text"
+                    value={manualTreatmentName}
+                    onChange={(event) => setManualTreatmentName(event.target.value)}
+                    placeholder="e.g. CON diet"
+                  />
+                </label>
+
+                <label className="field">
+                  <span>Start date</span>
+                  <input
+                    type="date"
+                    value={manualTreatmentStartDate}
+                    onChange={(event) => setManualTreatmentStartDate(event.target.value)}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>End date</span>
+                  <input
+                    type="date"
+                    value={manualTreatmentEndDate}
+                    onChange={(event) => setManualTreatmentEndDate(event.target.value)}
+                  />
+                </label>
+              </div>
+
+              <div className="field">
+                <span>Select cows from uploaded EART to treatment file</span>
+                <div className="cow-chip-grid treatment-chip-grid">
+                  {manualTreatmentCowOptions.map((cow) => {
+                    const isSelected = manualTreatmentCowSelection.includes(cow);
+                    return (
+                      <button
+                        key={`manual-treatment-${cow}`}
+                        type="button"
+                        className={`cow-chip ${isSelected ? "cow-chip-selected" : ""}`}
+                        onClick={() => toggleManualTreatmentCow(cow)}
+                      >
+                        {cow}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="action-row">
+                <button className="action-button" type="button" onClick={handleAddManualTreatmentAssignments}>
+                  Add manual treatment
+                </button>
+              </div>
+            </>
+            ) : (
+              <div className="empty-inline">
+              Upload the EART to treatment file first so the app has a cow list for manual treatment
+              entry.
+              </div>
+            )}
+
+          {manualTreatmentRows.length ? (
+            <div className="assignment-table-wrap">
+              <table className="weights-table assignment-table">
+                <thead>
+                  <tr>
+                    <th>Eartag</th>
+                    <th>Treatment</th>
+                    <th>Start date</th>
+                    <th>End date</th>
+                    <th>Source</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {manualTreatmentRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.eartag}</td>
+                      <td>{row.treatment}</td>
+                      <td>{row.startDate || "Any"}</td>
+                      <td>{row.endDate || "Any"}</td>
+                      <td>{row.source}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="table-action"
+                          onClick={() => handleRemoveManualTreatmentAssignment(row.id)}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
         </div>
 
         {intakeBasis === DMI_MODE && roughageOptions.length ? (
@@ -555,9 +782,20 @@ export default function Page() {
           {" | "}
           Mapping rows: <strong>{mappingRows.length}</strong>
           {" | "}
+          Treatment rows: <strong>{treatmentRows.length}</strong>
+          {" | "}
           Basis: <strong>{intakeLabelText}</strong>
         </p>
         <div className="action-row">
+          <label className="field am-feeding-field">
+            <span>AM feeding starts at</span>
+            <input
+              type="time"
+              step="60"
+              value={amFeedingStartTime}
+              onChange={(event) => setAmFeedingStartTime(event.target.value || "06:00")}
+            />
+          </label>
           <button
             className="action-button"
             type="button"
@@ -607,10 +845,7 @@ export default function Page() {
           <div className="legend">
             {chartData?.series?.map((series) => (
               <span key={series.key} className="legend-item">
-                <i
-                  className={`legend-swatch ${series.dashed ? "legend-dashed" : ""}`}
-                  style={{ background: series.dashed ? undefined : series.color, color: series.color }}
-                />
+                <LegendSwatch series={series} />
                 {series.label}
               </span>
             ))}
@@ -702,12 +937,21 @@ export default function Page() {
             matching <code>EART</code> eartag number.
           </li>
           <li>
+            <strong>Treatment assignment:</strong> upload a treatment sheet or add treatments manually in
+            the Intake tab, with optional start and end dates for each assignment window.
+          </li>
+          <li>
+            <strong>Treatment filter:</strong> use the Intake tab treatment filter to focus charts and
+            summaries on one treatment at a time.
+          </li>
+          <li>
             <strong>Intake from Midnight:</strong> exports one row per cow from 12:00 AM through
             11:59 PM for each calendar day.
           </li>
           <li>
-            <strong>Intake from AM Feeding:</strong> exports one row per cow from 6:00 AM through
-            the next day at 5:59 AM, using each visit start time to assign the feeding day.
+            <strong>Intake from AM Feeding:</strong> exports one row per cow from{" "}
+            {getAmFeedingWindowLabel(amFeedingStartTime)}, using each visit start time to assign
+            the feeding day.
           </li>
         </ul>
       </section>
@@ -757,8 +1001,8 @@ export default function Page() {
               checked={showOnlyTreatmentCows}
               onChange={(event) => setShowOnlyTreatmentCows(event.target.checked)}
             />
-            <span>Only show cows listed in the treatment file</span>
-          </label>
+              <span>Only show cows listed in the treatment file</span>
+            </label>
         </div>
 
         <p className="status">{statusText}</p>
@@ -908,7 +1152,8 @@ export default function Page() {
           </li>
           <li>
             <strong>Treatment file:</strong> upload a sheet with <code>EART</code> and
-            <code>Treatment</code> to filter the Body Weights tab and calculate treatment averages.
+            <code>Treatment</code>, and optionally <code>Start date</code> / <code>End date</code>,
+            to filter the Body Weights tab and calculate treatment averages.
           </li>
           <li>
             <strong>Treatment filter:</strong> you can show only cows listed in the treatment file,
@@ -937,10 +1182,12 @@ export default function Page() {
 function Chart({ chartData }) {
   const { points, series, title, unitLabel } = chartData;
   const width = 1000;
-  const height = 396;
-  const margin = { top: 24, right: 28, bottom: 70, left: 72 };
+  const hasRotatedLabels = points.length > 7;
+  const height = hasRotatedLabels ? 430 : 396;
+  const margin = { top: 24, right: hasRotatedLabels ? 40 : 28, bottom: hasRotatedLabels ? 110 : 70, left: 72 };
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
+  const xLabelStep = getXAxisLabelStep(points.length);
   const maxValue = Math.max(
     ...points.flatMap((point) =>
       series
@@ -978,13 +1225,22 @@ function Chart({ chartData }) {
       />
 
       {series.map((item) => (
-        <path
-          key={`path-${item.key}`}
-          className="series-line"
-          stroke={item.color}
-          strokeDasharray={item.dashed ? "8 5" : undefined}
-          d={buildPath(points, item.key, margin, innerWidth, innerHeight, yMax)}
-        />
+        <g key={`series-${item.key}`}>
+          <path
+            className="series-line series-line-halo"
+            stroke="rgba(255, 253, 248, 0.95)"
+            strokeWidth={(item.lineWidth || 3) + 4}
+            strokeDasharray={item.dashArray || (item.dashed ? "8 5" : undefined)}
+            d={buildPath(points, item.key, margin, innerWidth, innerHeight, yMax)}
+          />
+          <path
+            className="series-line"
+            stroke={item.color}
+            strokeWidth={item.lineWidth || 3}
+            strokeDasharray={item.dashArray || (item.dashed ? "8 5" : undefined)}
+            d={buildPath(points, item.key, margin, innerWidth, innerHeight, yMax)}
+          />
+        </g>
       ))}
 
       {series.map((item) =>
@@ -995,34 +1251,31 @@ function Chart({ chartData }) {
             return null;
           }
           const y = margin.top + innerHeight - (value / yMax) * innerHeight;
-          return (
-            <circle
-              key={`${item.key}-${point.label}-${index}`}
-              className="point"
-              cx={x}
-              cy={y}
-              r="4.5"
-              fill={item.color}
-            />
-          );
+          return renderPointMarker(item, x, y, `${item.key}-${point.label}-${index}`);
         })
       )}
 
       {points.map((point, index) => {
+        const shouldShowLabel =
+          index === 0 || index === points.length - 1 || index % xLabelStep === 0;
+        if (!shouldShowLabel) {
+          return null;
+        }
         const x = margin.left + (points.length > 1 ? xStep * index : innerWidth / 2);
-        const anchor = index === 0 ? "start" : index === points.length - 1 ? "end" : "middle";
-        const rotation = points.length > 7 ? -35 : 0;
+        const anchor = hasRotatedLabels ? "middle" : index === 0 ? "start" : index === points.length - 1 ? "end" : "middle";
+        const rotation = hasRotatedLabels ? -28 : 0;
+        const labelText = formatXAxisLabel(point.label, hasRotatedLabels);
 
         return (
           <text
             key={`label-${point.label}-${index}`}
             className="tick-label"
             x={x}
-            y={height - 16}
+            y={height - 22}
             textAnchor={anchor}
-            transform={`rotate(${rotation} ${x} ${height - 16})`}
+            transform={`rotate(${rotation} ${x} ${height - 22})`}
           >
-            {point.label}
+            {labelText}
           </text>
         );
       })}
@@ -1030,6 +1283,76 @@ function Chart({ chartData }) {
       <text className="axis-label" x={margin.left - 52} y={margin.top - 8}>
         {unitLabel || "kg"}
       </text>
+    </svg>
+  );
+}
+
+function getXAxisLabelStep(pointCount) {
+  if (pointCount <= 8) {
+    return 1;
+  }
+  if (pointCount <= 16) {
+    return 2;
+  }
+  if (pointCount <= 24) {
+    return 3;
+  }
+  if (pointCount <= 36) {
+    return 4;
+  }
+  if (pointCount <= 48) {
+    return 5;
+  }
+  return 6;
+}
+
+function formatXAxisLabel(label, useCompactDate = false) {
+  const text = String(label || "");
+  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!isoMatch) {
+    return text;
+  }
+
+  const [, yearText, monthText, dayText] = isoMatch;
+  const date = new Date(Number(yearText), Number(monthText) - 1, Number(dayText));
+  return date.toLocaleDateString("en-US", {
+    month: useCompactDate ? "short" : "2-digit",
+    day: "numeric",
+  });
+}
+
+function LegendSwatch({ series }) {
+  return (
+    <svg className="legend-swatch-svg" viewBox="0 0 38 16" aria-hidden="true">
+      <line
+        x1="3"
+        y1="8"
+        x2="35"
+        y2="8"
+        stroke="rgba(255, 253, 248, 0.95)"
+        strokeWidth={(series.lineWidth || 3) + 4}
+        strokeLinecap="round"
+        strokeDasharray={series.dashArray || (series.dashed ? "8 5" : undefined)}
+      />
+      <line
+        x1="3"
+        y1="8"
+        x2="35"
+        y2="8"
+        stroke={series.color}
+        strokeWidth={series.lineWidth || 3}
+        strokeLinecap="round"
+        strokeDasharray={series.dashArray || (series.dashed ? "8 5" : undefined)}
+      />
+      {renderMarkerShape({
+        shape: series.markerShape || "circle",
+        key: `${series.key}-legend`,
+        x: 19,
+        y: 8,
+        size: 5.4,
+        color: series.color,
+        filled: series.markerFilled !== false,
+      })}
     </svg>
   );
 }
@@ -1216,7 +1539,7 @@ function mapWeightRow(row) {
   };
 }
 
-function mapTreatmentRow(row) {
+function mapTreatmentRow(row, options = {}) {
   const normalizedRow = normalizeRowKeys(row);
   const eartag = String(
     normalizedRow.eart ||
@@ -1231,15 +1554,37 @@ function mapTreatmentRow(row) {
       normalizedRow.group ||
       ""
   ).trim();
+  const startDate = parseOptionalDateKey(
+    normalizedRow.startdate ||
+      normalizedRow["start date"] ||
+      normalizedRow.start ||
+      normalizedRow.from ||
+      normalizedRow.begindate ||
+      normalizedRow["begin date"] ||
+      ""
+  );
+  const endDate = parseOptionalDateKey(
+    normalizedRow.enddate ||
+      normalizedRow["end date"] ||
+      normalizedRow.end ||
+      normalizedRow.to ||
+      normalizedRow.stopdate ||
+      normalizedRow["stop date"] ||
+      ""
+  );
 
   if (!eartag || !treatment) {
     return null;
   }
 
-  return {
+  return createTreatmentAssignment({
     eartag,
     treatment,
-  };
+    startDate,
+    endDate,
+    source: options.source || "file",
+    rowIndex: options.rowIndex || 0,
+  });
 }
 
 function normalizeRowKeys(row) {
@@ -1277,6 +1622,62 @@ function parseSpreadsheetDate(value) {
   return new Date(text);
 }
 
+function parseOptionalDateKey(value) {
+  if (value === null || value === undefined || value === "") {
+    return "";
+  }
+  const timestamp = parseSpreadsheetDate(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    return "";
+  }
+  return toDateKey(timestamp);
+}
+
+function createTreatmentAssignment({
+  eartag,
+  treatment,
+  startDate = "",
+  endDate = "",
+  source = "manual",
+  rowIndex = 0,
+}) {
+  const normalizedEartag = String(eartag || "").trim();
+  const normalizedTreatment = String(treatment || "").trim();
+  return {
+    id: `${source}-${normalizedEartag}-${normalizedTreatment}-${startDate || "any"}-${endDate || "any"}-${rowIndex}`,
+    eartag: normalizedEartag,
+    treatment: normalizedTreatment,
+    startDate: startDate || "",
+    endDate: endDate || "",
+    source,
+  };
+}
+
+function compareTreatmentAssignments(left, right) {
+  const leftStart = left.startDate || "0000-00-00";
+  const rightStart = right.startDate || "0000-00-00";
+  const leftEnd = left.endDate || "9999-12-31";
+  const rightEnd = right.endDate || "9999-12-31";
+  return (
+    rightStart.localeCompare(leftStart) ||
+    leftEnd.localeCompare(rightEnd) ||
+    String(left.id).localeCompare(String(right.id))
+  );
+}
+
+function resolveTreatmentForDate(assignments, dateKey) {
+  const match = assignments.find((assignment) => {
+    if (assignment.startDate && dateKey < assignment.startDate) {
+      return false;
+    }
+    if (assignment.endDate && dateKey > assignment.endDate) {
+      return false;
+    }
+    return true;
+  });
+  return match?.treatment || "";
+}
+
 function buildMappingLookup(mappingRows) {
   return mappingRows.reduce((lookup, row) => {
     lookup.set(row.transponder, {
@@ -1312,16 +1713,24 @@ function buildBodyWeightLookup(mappingRows) {
 
 function buildTreatmentLookup(treatmentRows) {
   return treatmentRows.reduce((lookup, row) => {
-    lookup.set(String(row.eartag), row.treatment);
+    const key = String(row.eartag);
+    const current = lookup.get(key) || [];
+    current.push(row);
+    current.sort(compareTreatmentAssignments);
+    lookup.set(key, current);
     return lookup;
   }, new Map());
 }
 
-function enrichRows(rows, mappingLookup) {
-  return rows.map((row) => ({
-    ...row,
-    eartag: mappingLookup.get(row.transponder)?.eartag || row.transponder || "Unknown",
-  }));
+function enrichRows(rows, mappingLookup, treatmentLookup) {
+  return rows.map((row) => {
+    const eartag = mappingLookup.get(row.transponder)?.eartag || row.transponder || "Unknown";
+    return {
+      ...row,
+      eartag,
+      treatment: resolveTreatmentForDate(treatmentLookup.get(String(eartag)) || [], row.dateKey) || "",
+    };
+  });
 }
 
 function enrichWeightRows(rows, bodyWeightLookup, treatmentLookup) {
@@ -1338,7 +1747,11 @@ function enrichWeightRows(rows, bodyWeightLookup, treatmentLookup) {
         eartag: lookupMatch?.eartag || row.eid || "Unknown",
         linkedEid: lookupMatch?.eid || (isTransId ? "" : row.eid) || "Unknown",
         transId: lookupMatch?.transId || (isTransId ? row.eid : ""),
-        treatment: treatmentLookup.get(String(lookupMatch?.eartag || row.eid || "Unknown")) || "",
+        treatment:
+          resolveTreatmentForDate(
+            treatmentLookup.get(String(lookupMatch?.eartag || row.eid || "Unknown")) || [],
+            row.dateKey
+          ) || "",
       };
     })
     .sort((a, b) => {
@@ -1355,6 +1768,15 @@ function filterWeightRows(rows, showOnlyTreatmentCows, selectedTreatment) {
     if (showOnlyTreatmentCows && !row.treatment) {
       return false;
     }
+    if (selectedTreatment !== ALL_TREATMENTS && row.treatment !== selectedTreatment) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function filterRowsByAssignedTreatment(rows, selectedTreatment) {
+  return rows.filter((row) => {
     if (selectedTreatment !== ALL_TREATMENTS && row.treatment !== selectedTreatment) {
       return false;
     }
@@ -1674,18 +2096,28 @@ function buildAggregateSeries() {
 function buildPerCowSeries(selectedCows) {
   return selectedCows.flatMap((cow, index) => {
     const color = COW_COLORS[index % COW_COLORS.length];
+    const markerShape = COW_MARKERS[index % COW_MARKERS.length];
+    const stolenDashArray = STOLEN_DASH_PATTERNS[index % STOLEN_DASH_PATTERNS.length];
     return [
       {
         key: getCowSeriesKey(cow, "unlimited"),
         label: `${cow} unlimited`,
         color,
         dashed: false,
+        dashArray: undefined,
+        markerShape,
+        markerFilled: true,
+        lineWidth: 3.6,
       },
       {
         key: getCowSeriesKey(cow, "stolen"),
         label: `${cow} stolen`,
         color,
         dashed: true,
+        dashArray: stolenDashArray,
+        markerShape,
+        markerFilled: false,
+        lineWidth: 3.2,
       },
     ];
   });
@@ -1950,7 +2382,8 @@ function buildDailyCowReportRows(rows, getReportDateKey, intakeBasis, intakeUnit
       report_day: reportDay,
       eartag: row.eartag || "Unknown",
       transponderSet: new Set(),
-      roughageSet: new Set(),
+      unlimitedRoughageSet: new Set(),
+      stolenRoughageSet: new Set(),
       sourceFileSet: new Set(),
       unlimited: 0,
       stolen: 0,
@@ -1958,14 +2391,17 @@ function buildDailyCowReportRows(rows, getReportDateKey, intakeBasis, intakeUnit
 
     bucket.transponderSet.add(row.transponder || "Unknown");
     bucket.sourceFileSet.add(row.sourceFile || "");
-    if (row.roughageType) {
-      bucket.roughageSet.add(row.roughageType);
-    }
     if (row.unlimited) {
       bucket.unlimited += row.intakeKg;
+      if (row.roughageType) {
+        bucket.unlimitedRoughageSet.add(row.roughageType);
+      }
     }
     if (row.stolen) {
       bucket.stolen += row.intakeKg;
+      if (row.roughageType) {
+        bucket.stolenRoughageSet.add(row.roughageType);
+      }
     }
 
     grouped.set(key, bucket);
@@ -1980,7 +2416,8 @@ function buildDailyCowReportRows(rows, getReportDateKey, intakeBasis, intakeUnit
       report_day: row.report_day,
       eartag: row.eartag,
       transponder_eid: Array.from(row.transponderSet).sort().join(" | "),
-      roughage_types: Array.from(row.roughageSet).sort().join(" | "),
+      roughage_types_unlimited: Array.from(row.unlimitedRoughageSet).sort().join(" | "),
+      roughage_types_stolen: Array.from(row.stolenRoughageSet).sort().join(" | "),
       intake_basis: intakeBasis === DMI_MODE ? "Dry Matter Intake" : "As-fed intake",
       unlimited_intake: formatNumber(row.unlimited),
       stolen_intake: formatNumber(row.stolen),
@@ -1994,12 +2431,89 @@ function getMidnightReportDateKey(timestamp) {
   return toDateKey(timestamp);
 }
 
-function getAmFeedingReportDateKey(timestamp) {
+function getAmFeedingReportDateKey(timestamp, feedingStartTime = "06:00") {
   const reportDate = new Date(timestamp);
-  if (reportDate.getHours() < 6) {
+  const feedingStartMinutes = parseTimeInput(feedingStartTime);
+  const rowMinutes = reportDate.getHours() * 60 + reportDate.getMinutes();
+  if (rowMinutes < feedingStartMinutes) {
     reportDate.setDate(reportDate.getDate() - 1);
   }
   return toDateKey(reportDate);
+}
+
+function parseTimeInput(timeText) {
+  const [hourText = "6", minuteText = "0"] = String(timeText || "06:00").split(":");
+  const hours = Number.parseInt(hourText, 10);
+  const minutes = Number.parseInt(minuteText, 10);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
+    return 6 * 60;
+  }
+  return hours * 60 + minutes;
+}
+
+function formatClockTime(totalMinutes) {
+  const minutesInDay = 24 * 60;
+  const normalized = ((totalMinutes % minutesInDay) + minutesInDay) % minutesInDay;
+  const hours = Math.floor(normalized / 60);
+  const minutes = normalized % 60;
+  const reference = new Date(2000, 0, 1, hours, minutes);
+  return reference.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function getAmFeedingWindowLabel(feedingStartTime) {
+  const feedingStartMinutes = parseTimeInput(feedingStartTime);
+  const feedingEndMinutes = feedingStartMinutes - 1;
+  return `${formatClockTime(feedingStartMinutes)} through the next day at ${formatClockTime(feedingEndMinutes)}`;
+}
+
+function renderPointMarker(series, x, y, key) {
+  return renderMarkerShape({
+    shape: series.markerShape || "circle",
+    key,
+    x,
+    y,
+    size: 6.2,
+    color: series.color,
+    filled: series.markerFilled !== false,
+  });
+}
+
+function renderMarkerShape({ shape, key, x, y, size, color, filled }) {
+  const commonProps = {
+    className: "point",
+    stroke: color,
+    strokeWidth: filled ? 2.2 : 2.6,
+    fill: filled ? color : "#fffdf8",
+  };
+
+  if (shape === "square") {
+    return <rect key={key} {...commonProps} x={x - size} y={y - size} width={size * 2} height={size * 2} rx="1.5" />;
+  }
+
+  if (shape === "diamond") {
+    return (
+      <polygon
+        key={key}
+        {...commonProps}
+        points={`${x},${y - size} ${x + size},${y} ${x},${y + size} ${x - size},${y}`}
+      />
+    );
+  }
+
+  if (shape === "triangle") {
+    return (
+      <polygon
+        key={key}
+        {...commonProps}
+        points={`${x},${y - size} ${x + size},${y + size} ${x - size},${y + size}`}
+      />
+    );
+  }
+
+  return <circle key={key} {...commonProps} cx={x} cy={y} r={size} />;
 }
 
 function groupRowsBy(rows, getKey) {
@@ -2022,6 +2536,18 @@ function filterByDateRange(rows, startDate, endDate) {
     }
     return true;
   });
+}
+
+function getWeekStart(dateKey) {
+  const [yearText, monthText, dayText] = String(dateKey).split("-");
+  const reference = new Date(Number(yearText), Number(monthText) - 1, Number(dayText));
+  if (Number.isNaN(reference.getTime())) {
+    return String(dateKey);
+  }
+  const dayOfWeek = reference.getDay();
+  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  reference.setDate(reference.getDate() + diffToMonday);
+  return toDateKey(reference);
 }
 
 function seedDateInputs(rows, setDayInput, setRangeStartInput, setRangeEndInput) {
