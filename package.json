@@ -1,16 +1,21 @@
 {
-  "name": "intake-plotter",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
-  },
-  "dependencies": {
-    "next": "^15.0.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "xlsx": "^0.18.5"
-  }
+    "name":  "intake-plotter",
+    "private":  true,
+    "scripts":  {
+                    "dev":  "next dev",
+                    "build":  "next build",
+                    "start":  "next start",
+                    "lint":  "next lint"
+                },
+    "dependencies":  {
+                         "next":  "^15.0.0",
+                         "react":  "^19.0.0",
+                         "react-dom":  "^19.0.0",
+                         "xlsx":  "^0.18.5",
+                         "html-to-image":  "^1.11.11",
+                         "jspdf":  "^2.5.2",
+                         "papaparse":  "^5.4.1",
+                         "plotly.js-dist-min":  "^3.0.1",
+                         "react-plotly.js":  "^2.6.0"
+                     }
 }
