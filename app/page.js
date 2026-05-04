@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const LB_TO_KG = 0.45359237;
 const TIME_ZONE = "America/New_York";
@@ -25,15 +25,23 @@ const STOLEN_COLOR = "#b14f1f";
 const COW_COLORS = ["#17594a", "#a34724", "#1d5d90", "#7b4ab0", "#866000", "#8f2d56"];
 const COW_MARKERS = ["circle", "square", "diamond", "triangle"];
 const STOLEN_DASH_PATTERNS = ["10 6", "5 4", "14 5 3 5", "2 5"];
+const INTAKE_REPORT_FIGURES = [
+  { key: "summary", label: "Summary cards" },
+  { key: "chart", label: "Current intake chart" },
+  { key: "tracked", label: "Selected tracked cow details" },
+  { key: "notes", label: "Plot guide notes" },
+];
 let spreadsheetLibraryPromise;
 const GreenFeedDashboard = dynamic(() => import("./GreenFeedDashboard"), { ssr: false });
 
 const emptySummary = {
   rowsLoaded: "0",
   cowsTracked: "0",
-  unlimitedTotal: "0.00",
-  stolenTotal: "0.00",
+  unlimitedDailyAverage: "0.00",
+  stolenDailyAverage: "0.00",
+  stolenPercent: "0.00%",
   dateSpan: "-",
+  treatmentCards: [],
 };
 
 export default function Page() {
@@ -47,7 +55,6 @@ export default function Page() {
   const [manualTreatmentRows, setManualTreatmentRows] = useState([]);
   const [selectedWeightEartag, setSelectedWeightEartag] = useState("");
   const [selectedTreatment, setSelectedTreatment] = useState(ALL_TREATMENTS);
-  const [selectedIntakeTreatment, setSelectedIntakeTreatment] = useState(ALL_TREATMENTS);
   const [showOnlyTreatmentCows, setShowOnlyTreatmentCows] = useState(false);
   const [weightPlotMode, setWeightPlotMode] = useState(WEIGHT_PLOT_COW_MODE);
   const [unitMode, setUnitMode] = useState("lbs");
@@ -67,6 +74,14 @@ export default function Page() {
   const [manualTreatmentCowSelection, setManualTreatmentCowSelection] = useState([]);
   const [showManualTreatmentBuilder, setShowManualTreatmentBuilder] = useState(false);
   const [dietAssociations, setDietAssociations] = useState({});
+  const [selectedTrackedCow, setSelectedTrackedCow] = useState("");
+  const [reportFormat, setReportFormat] = useState("pdf");
+  const [reportFigureSelection, setReportFigureSelection] = useState({
+    summary: true,
+    chart: true,
+    tracked: false,
+    notes: false,
+  });
   const [dayInput, setDayInput] = useState("");
   const [rangeStartInput, setRangeStartInput] = useState("");
   const [rangeEndInput, setRangeEndInput] = useState("");
@@ -75,6 +90,10 @@ export default function Page() {
   const [chartTitle, setChartTitle] = useState("Waiting for data");
   const [chartData, setChartData] = useState(null);
   const [summary, setSummary] = useState(emptySummary);
+  const summarySectionRef = useRef(null);
+  const chartSectionRef = useRef(null);
+  const trackedSectionRef = useRef(null);
+  const notesSectionRef = useRef(null);
 
   const treatmentRows = useMemo(
     () => [...uploadedTreatmentRows, ...manualTreatmentRows],
@@ -99,21 +118,17 @@ export default function Page() {
     () => getProcessedRows(enrichedRows, unitMode, ignoreNegative, intakeBasis, dmByRoughage),
     [enrichedRows, unitMode, ignoreNegative, intakeBasis, dmByRoughage]
   );
-  const intakeTreatmentFilteredRows = useMemo(
-    () => filterRowsByAssignedTreatment(processedRows, selectedIntakeTreatment),
-    [processedRows, selectedIntakeTreatment]
-  );
   const scopedRows = useMemo(
-    () => filterRowsByScope(intakeTreatmentFilteredRows, analysisScope),
-    [intakeTreatmentFilteredRows, analysisScope]
+    () => filterRowsByScope(processedRows, analysisScope),
+    [processedRows, analysisScope]
   );
   const filteredRows = useMemo(
     () => filterRowsByDateRange(scopedRows, rangeStartInput, rangeEndInput),
     [scopedRows, rangeStartInput, rangeEndInput]
   );
   const perCowFilteredRows = useMemo(
-    () => filterRowsByDateRange(intakeTreatmentFilteredRows, rangeStartInput, rangeEndInput),
-    [intakeTreatmentFilteredRows, rangeStartInput, rangeEndInput]
+    () => filterRowsByDateRange(processedRows, rangeStartInput, rangeEndInput),
+    [processedRows, rangeStartInput, rangeEndInput]
   );
   const treatmentComparisonRows = useMemo(
     () => filterRowsByDateRange(processedRows, rangeStartInput, rangeEndInput),
@@ -127,6 +142,10 @@ export default function Page() {
   const intakeUnitLabel = intakeBasis === DMI_MODE ? "kg DM" : "kg";
   const intakeLabelText = intakeBasis === DMI_MODE ? "Dry Matter Intake" : "Intake";
   const trackedCows = useMemo(() => buildTrackedCowList(enrichedRows), [enrichedRows]);
+  const selectedTrackedCowRecord = useMemo(
+    () => trackedCows.find((cow) => cow.eartag === selectedTrackedCow) || trackedCows[0] || null,
+    [trackedCows, selectedTrackedCow]
+  );
   const linkedWeightRows = useMemo(
     () => enrichWeightRows(weightRows, bodyWeightLookup, treatmentLookup),
     [weightRows, bodyWeightLookup, treatmentLookup]
@@ -191,6 +210,16 @@ export default function Page() {
   }, [trackedCows]);
 
   useEffect(() => {
+    if (!trackedCows.length) {
+      setSelectedTrackedCow("");
+      return;
+    }
+    if (!selectedTrackedCow || !trackedCows.some((cow) => cow.eartag === selectedTrackedCow)) {
+      setSelectedTrackedCow(trackedCows[0].eartag);
+    }
+  }, [trackedCows, selectedTrackedCow]);
+
+  useEffect(() => {
     if (!weightEartagOptions.length) {
       setSelectedWeightEartag("");
       return;
@@ -203,29 +232,17 @@ export default function Page() {
   useEffect(() => {
     if (!treatmentOptions.length) {
       setSelectedTreatment(ALL_TREATMENTS);
-      setSelectedIntakeTreatment(ALL_TREATMENTS);
       return;
     }
     if (selectedTreatment !== ALL_TREATMENTS && !treatmentOptions.includes(selectedTreatment)) {
       setSelectedTreatment(ALL_TREATMENTS);
     }
-    if (selectedIntakeTreatment !== ALL_TREATMENTS && !treatmentOptions.includes(selectedIntakeTreatment)) {
-      setSelectedIntakeTreatment(ALL_TREATMENTS);
-    }
-  }, [selectedTreatment, selectedIntakeTreatment, treatmentOptions]);
+  }, [selectedTreatment, treatmentOptions]);
 
   useEffect(() => {
     const allowedCows = new Set(manualTreatmentCowOptions);
     setManualTreatmentCowSelection((current) => current.filter((cow) => allowedCows.has(cow)));
   }, [manualTreatmentCowOptions]);
-
-  useEffect(() => {
-    if (!uploadedTreatmentRows.length) {
-      setShowManualTreatmentBuilder(true);
-    } else {
-      setShowManualTreatmentBuilder(false);
-    }
-  }, [uploadedTreatmentRows.length]);
 
   useEffect(() => {
     setDmByRoughage((current) => {
@@ -246,9 +263,8 @@ export default function Page() {
       return;
     }
 
-    setSummary(buildSummary(filteredRows));
-
     if (!chartRows.length) {
+      setSummary(buildSummary(null, filteredRows, viewMode, rangeStartInput, rangeEndInput, plotMode, selectedTreatmentGroups));
       setChartTitle(getScopeTitle(analysisScope));
       setStatusText(
         analysisScope === OVERALL_SCOPE
@@ -298,6 +314,9 @@ export default function Page() {
             ? buildRangeSummarySeries(chartRows, rangeStartInput, rangeEndInput, analysisScope, intakeUnitLabel, intakeLabelText)
             : buildWeeklyAverageSeries(chartRows, rangeStartInput, rangeEndInput, analysisScope, intakeUnitLabel, intakeLabelText);
 
+    setSummary(
+      buildSummary(nextChartData, filteredRows, viewMode, rangeStartInput, rangeEndInput, plotMode, selectedTreatmentGroups)
+    );
     setChartTitle(nextChartData.title);
     setStatusText(nextChartData.status);
     setChartData(nextChartData);
@@ -631,6 +650,139 @@ export default function Page() {
     setStatusText(`Downloaded Body Weights CSV with ${displayedWeightRows.length} rows.`);
   }
 
+  function toggleReportFigureSelection(key) {
+    setReportFigureSelection((current) => ({
+      ...current,
+      [key]: !current[key],
+    }));
+  }
+
+  async function handleDownloadVisualReport() {
+    const selectedFigureKeys = INTAKE_REPORT_FIGURES.filter((figure) => reportFigureSelection[figure.key]).map(
+      (figure) => figure.key
+    );
+
+    if (!selectedFigureKeys.length) {
+      setStatusText("Select at least one figure to include in the report export.");
+      return;
+    }
+
+    const sectionDefinitions = [
+      {
+        key: "summary",
+        title: "Summary cards",
+        element: summarySectionRef.current,
+        include: Boolean(reportFigureSelection.summary),
+      },
+      {
+        key: "chart",
+        title: chartTitle || "Current intake chart",
+        element: chartSectionRef.current,
+        include: Boolean(reportFigureSelection.chart),
+      },
+      {
+        key: "tracked",
+        title: "Selected tracked cow details",
+        element: trackedSectionRef.current,
+        include: Boolean(reportFigureSelection.tracked) && Boolean(trackedCows.length),
+      },
+      {
+        key: "notes",
+        title: "Plot guide notes",
+        element: notesSectionRef.current,
+        include: Boolean(reportFigureSelection.notes),
+      },
+    ].filter((section) => section.include && section.element);
+
+    if (!sectionDefinitions.length) {
+      setStatusText("The selected report figures are not available yet. Upload data or choose another figure.");
+      return;
+    }
+
+    const reportBaseName = slugifyFileName(`${chartTitle || "intake-report"}-${rangeStartInput || "start"}-${rangeEndInput || "end"}`);
+
+    if (reportFormat === "html") {
+      const htmlReport = buildInteractiveHtmlReport({
+        chartTitle,
+        chartData,
+        summary,
+        intakeUnitLabel,
+        intakeLabelText,
+        statusText,
+        substatusText: `Intake files loaded: ${rows.length ? countDistinct(rows, "sourceFile") : 0} | Roughage types: ${roughageOptions.length} | Mapping rows: ${mappingRows.length} | Treatment rows: ${treatmentRows.length} | Basis: ${intakeLabelText}`,
+        selectedFigures: selectedFigureKeys,
+        selectedTrackedCowRecord,
+        analysisSummary: buildIntakeAnalysisSummary({
+          viewMode,
+          plotMode,
+          analysisScope,
+          selectedCows,
+          selectedTreatmentGroups,
+          rangeStartInput,
+          rangeEndInput,
+          dayInput,
+        }),
+      });
+
+      downloadTextFile(`${reportBaseName}.html`, htmlReport, "text/html");
+      setStatusText(`Downloaded interactive HTML report with ${sectionDefinitions.length} figure section(s).`);
+      return;
+    }
+
+    try {
+      const [{ toPng }, { jsPDF }] = await Promise.all([import("html-to-image"), import("jspdf")]);
+      const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const pageMargin = 36;
+      const contentWidth = pageWidth - pageMargin * 2;
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(18);
+      pdf.text("Daily Intake Report", pageMargin, 34);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(10);
+      pdf.text(
+        `Exported ${new Date().toLocaleString("en-US", { timeZone: TIME_ZONE })} | ${chartTitle || "Current intake chart"}`,
+        pageMargin,
+        52
+      );
+      pdf.text(`Figures: ${sectionDefinitions.map((section) => section.title).join(", ")}`, pageMargin, 68, {
+        maxWidth: contentWidth,
+      });
+
+      let isFirstSection = true;
+
+      for (const section of sectionDefinitions) {
+        if (!isFirstSection) {
+          pdf.addPage();
+        }
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(14);
+        pdf.text(section.title, pageMargin, 32);
+
+        const dataUrl = await toPng(section.element, {
+          cacheBust: true,
+          pixelRatio: 2,
+          backgroundColor: "#fffdf8",
+        });
+        const imageSize = await getImageSize(dataUrl);
+        const scale = Math.min(contentWidth / imageSize.width, (pageHeight - 88) / imageSize.height);
+        const renderWidth = imageSize.width * scale;
+        const renderHeight = imageSize.height * scale;
+        pdf.addImage(dataUrl, "PNG", pageMargin, 44, renderWidth, renderHeight, undefined, "FAST");
+        isFirstSection = false;
+      }
+
+      pdf.save(`${reportBaseName}.pdf`);
+      setStatusText(`Downloaded PDF report with ${sectionDefinitions.length} figure section(s).`);
+    } catch (error) {
+      console.error(error);
+      setStatusText("The PDF export could not be created. Try the HTML report or refresh the page and try again.");
+    }
+  }
+
   return (
     <main className="app-shell">
       <section className="hero">
@@ -712,7 +864,7 @@ export default function Page() {
         <div className="workflow-section">
           <div className="workflow-section-header">
             <div>
-              <div className="workflow-section-title"><span className="workflow-step">1</span><strong>Files</strong></div>
+              <div className="workflow-section-title"><strong>Files</strong></div>
               <p>Choose the intake source and upload the files needed for matching cows, treatments, and intakes.</p>
             </div>
           </div>
@@ -780,7 +932,7 @@ export default function Page() {
           <div className="workflow-section">
             <div className="workflow-section-header">
               <div>
-                <div className="workflow-section-title"><span className="workflow-step">2</span><strong>Treatment roughage map</strong></div>
+                <div className="workflow-section-title"><strong>Treatment roughage map</strong></div>
                 <p>Match each detected treatment to its assigned roughage type, or ignore treatments that should not classify intake.</p>
               </div>
               <span className={`association-status ${dietAssociationOptions.pendingTreatments.length ? "association-status-warning" : ""}`}>
@@ -821,22 +973,21 @@ export default function Page() {
         <div className="workflow-section">
           <div className="workflow-section-header">
             <div>
-              <div className="workflow-section-title"><span className="workflow-step">3</span><strong>Manual treatment assignment</strong></div>
+              <div className="workflow-section-title"><strong>Manual treatment assignment</strong></div>
               <p>
                 {uploadedTreatmentRows.length
                   ? "Treatment file loaded. Manual treatment assignment is optional."
                   : "Upload a treatment file or manually assign a treatment to selected cows for an optional date range."}
               </p>
             </div>
-            {uploadedTreatmentRows.length ? (
-              <button
-                className="table-action"
-                type="button"
-                onClick={() => setShowManualTreatmentBuilder((current) => !current)}
-              >
-                {showManualTreatmentBuilder ? "Hide manual assignment" : "Add manual assignment"}
-              </button>
-            ) : null}
+            <label className="field checkbox-field compact-checkbox-field manual-assignment-toggle">
+              <input
+                type="checkbox"
+                checked={showManualTreatmentBuilder}
+                onChange={(event) => setShowManualTreatmentBuilder(event.target.checked)}
+              />
+              <span>Add manual treatment assignment</span>
+            </label>
           </div>
           <div className="treatment-builder">
             {showManualTreatmentBuilder ? (
@@ -945,7 +1096,7 @@ export default function Page() {
         <div className="workflow-section">
           <div className="workflow-section-header">
             <div>
-              <div className="workflow-section-title"><span className="workflow-step">4</span><strong>Filtering and plot controls</strong></div>
+              <div className="workflow-section-title"><strong>Filtering and plot controls</strong></div>
               <p>After treatment setup, choose the animals or treatments to include and control how the plot is summarized.</p>
             </div>
           </div>
@@ -992,17 +1143,6 @@ export default function Page() {
                     ))}
                   </select>
                 </label>
-                <label className="field">
-                  <span>Treatment filter</span>
-                  <select value={selectedIntakeTreatment} onChange={(event) => setSelectedIntakeTreatment(event.target.value)}>
-                    <option value={ALL_TREATMENTS}>All treatments</option>
-                    {treatmentOptions.map((treatment) => (
-                      <option key={`intake-treatment-${treatment}`} value={treatment}>
-                        {treatment}
-                      </option>
-                    ))}
-                  </select>
-                </label>
               </div>
             </div>
 
@@ -1025,33 +1165,35 @@ export default function Page() {
                     <option value={TREATMENT_GROUP_PLOT_MODE}>Treatment group comparison</option>
                   </select>
                 </label>
-                <label className="field">
-                  <span>Specific day</span>
-                  <input
-                    type="date"
-                    value={dayInput}
-                    onChange={(event) => setDayInput(event.target.value)}
-                    disabled={viewMode !== "day"}
-                  />
-                </label>
-                <label className="field">
-                  <span>Range start</span>
-                  <input
-                    type="date"
-                    value={rangeStartInput}
-                    onChange={(event) => setRangeStartInput(event.target.value)}
-                    disabled={viewMode === "day"}
-                  />
-                </label>
-                <label className="field">
-                  <span>Range end</span>
-                  <input
-                    type="date"
-                    value={rangeEndInput}
-                    onChange={(event) => setRangeEndInput(event.target.value)}
-                    disabled={viewMode === "day"}
-                  />
-                </label>
+                {viewMode === "day" ? (
+                  <label className="field">
+                    <span>Specific day</span>
+                    <input
+                      type="date"
+                      value={dayInput}
+                      onChange={(event) => setDayInput(event.target.value)}
+                    />
+                  </label>
+                ) : (
+                  <>
+                    <label className="field">
+                      <span>Range start</span>
+                      <input
+                        type="date"
+                        value={rangeStartInput}
+                        onChange={(event) => setRangeStartInput(event.target.value)}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Range end</span>
+                      <input
+                        type="date"
+                        value={rangeEndInput}
+                        onChange={(event) => setRangeEndInput(event.target.value)}
+                      />
+                    </label>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -1061,7 +1203,7 @@ export default function Page() {
           <div className="workflow-section">
             <div className="workflow-section-header">
               <div>
-                <div className="workflow-section-title"><span className="workflow-step">5</span><strong>Date quality</strong></div>
+                <div className="workflow-section-title"><strong>Date quality</strong></div>
                 <p>Review the detected upload range, missing days, and choose the date window for the analysis.</p>
               </div>
             </div>
@@ -1118,7 +1260,7 @@ export default function Page() {
           <div className="workflow-section">
             <div className="workflow-section-header">
               <div>
-                <div className="workflow-section-title"><span className="workflow-step">6</span><strong>Dry matter setup</strong></div>
+                <div className="workflow-section-title"><strong>Dry matter setup</strong></div>
                 <p>Enter the dry matter percent for each roughage type when viewing Dry Matter Intake.</p>
               </div>
             </div>
@@ -1191,9 +1333,49 @@ export default function Page() {
             Download Intake from AM Feeding
           </button>
         </div>
+        <div className="workflow-section report-export-panel">
+          <div className="workflow-section-header">
+            <div>
+              <div className="workflow-section-title"><strong>Report export</strong></div>
+              <p>Choose a PDF or interactive HTML report and pick which figures from the Intake tab to include.</p>
+            </div>
+          </div>
+          <div className="report-export-grid">
+            <label className="field">
+              <span>Report format</span>
+              <select value={reportFormat} onChange={(event) => setReportFormat(event.target.value)}>
+                <option value="pdf">PDF report</option>
+                <option value="html">Interactive HTML report</option>
+              </select>
+            </label>
+            <div className="field field-wide">
+              <span>Figures to include</span>
+              <div className="report-figure-grid">
+                {INTAKE_REPORT_FIGURES.map((figure) => (
+                  <label key={figure.key} className="checkbox-field compact-checkbox-field report-figure-option">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(reportFigureSelection[figure.key])}
+                      onChange={() => toggleReportFigureSelection(figure.key)}
+                    />
+                    <span>{figure.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="report-export-actions">
+            <button className="action-button" type="button" onClick={handleDownloadVisualReport}>
+              {reportFormat === "html" ? "Download Interactive HTML Report" : "Download PDF Report"}
+            </button>
+            <p className="report-export-note">
+              HTML keeps hoverable chart points. PDF captures the current Intake tab view as a fixed report.
+            </p>
+          </div>
+        </div>
       </section>
 
-      <section className="stats-grid stats-grid-wide">
+      <section ref={summarySectionRef} className="stats-grid stats-grid-wide">
         <article className="panel stat-card">
           <span className="stat-label">Rows loaded</span>
           <strong>{summary.rowsLoaded}</strong>
@@ -1202,21 +1384,38 @@ export default function Page() {
           <span className="stat-label">Cows tracked</span>
           <strong>{summary.cowsTracked}</strong>
         </article>
-        <article className="panel stat-card">
-          <span className="stat-label">Unlimited total ({intakeUnitLabel})</span>
-          <strong>{summary.unlimitedTotal}</strong>
-        </article>
-        <article className="panel stat-card">
-          <span className="stat-label">Stolen total ({intakeUnitLabel})</span>
-          <strong>{summary.stolenTotal}</strong>
-        </article>
+        {summary.treatmentCards.length ? (
+          summary.treatmentCards.map((card) => (
+            <article key={card.treatment} className="panel stat-card stat-card-treatment">
+              <span className="stat-label">Treatment {card.treatment}</span>
+              <strong>{card.unlimitedDailyAverage} {intakeUnitLabel}</strong>
+              <p className="stat-card-detail">Unlimited daily avg</p>
+              <p className="stat-card-detail">Stolen daily avg: {card.stolenDailyAverage} {intakeUnitLabel}</p>
+            </article>
+          ))
+        ) : (
+          <>
+            <article className="panel stat-card">
+              <span className="stat-label">Unlimited daily avg ({intakeUnitLabel})</span>
+              <strong>{summary.unlimitedDailyAverage}</strong>
+            </article>
+            <article className="panel stat-card">
+              <span className="stat-label">Stolen daily avg ({intakeUnitLabel})</span>
+              <strong>{summary.stolenDailyAverage}</strong>
+            </article>
+            <article className="panel stat-card">
+              <span className="stat-label">Stolen % of daily intake</span>
+              <strong>{summary.stolenPercent}</strong>
+            </article>
+          </>
+        )}
         <article className="panel stat-card">
           <span className="stat-label">Date span</span>
           <strong>{summary.dateSpan}</strong>
         </article>
       </section>
 
-      <section className="panel chart-panel">
+      <section ref={chartSectionRef} className="panel chart-panel">
         <div className="chart-header">
           <div>
             <p className="eyebrow">Plot</p>
@@ -1289,7 +1488,7 @@ export default function Page() {
         </div>
       </section>
 
-      <section className="panel tracked-panel">
+      <section ref={trackedSectionRef} className="panel tracked-panel">
         <div className="tracked-header">
           <div>
             <p className="eyebrow">Tracked Cows</p>
@@ -1298,15 +1497,25 @@ export default function Page() {
           <p className="tracked-count">{trackedCows.length} cows</p>
         </div>
         {trackedCows.length ? (
-          <div className="tracked-grid">
-            {trackedCows.map((cow) => (
-              <article key={`${cow.eartag}-${cow.transponder}`} className="tracked-card">
+          <div className="tracked-browser">
+            <label className="field tracked-select">
+              <span>Select cow</span>
+              <select value={selectedTrackedCowRecord?.eartag || ""} onChange={(event) => setSelectedTrackedCow(event.target.value)}>
+                {trackedCows.map((cow) => (
+                  <option key={`${cow.eartag}-${cow.transponder}`} value={cow.eartag}>
+                    {cow.eartag}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedTrackedCowRecord ? (
+              <article className="tracked-card tracked-card-single">
                 <span className="tracked-label">Eartag</span>
-                <strong>{cow.eartag}</strong>
-                <span className="tracked-meta">EID / transponder: {cow.transponder}</span>
-                <span className="tracked-meta">Rows: {cow.rowCount}</span>
+                <strong>{selectedTrackedCowRecord.eartag}</strong>
+                <span className="tracked-meta">EID / transponder: {selectedTrackedCowRecord.transponder}</span>
+                <span className="tracked-meta">Rows: {selectedTrackedCowRecord.rowCount}</span>
               </article>
-            ))}
+            ) : null}
           </div>
         ) : (
           <div className="empty-inline">
@@ -1315,7 +1524,7 @@ export default function Page() {
         )}
       </section>
 
-      <section className="panel notes">
+      <section ref={notesSectionRef} className="panel notes">
         <h3>How each plot works</h3>
         <ul>
           <li>
@@ -1342,10 +1551,6 @@ export default function Page() {
           <li>
             <strong>Treatment assignment:</strong> upload a treatment sheet or add treatments manually in
             the Intake tab, with optional start and end dates for each assignment window.
-          </li>
-          <li>
-            <strong>Treatment filter:</strong> use the Intake tab treatment filter to focus charts and
-            summaries on one treatment at a time.
           </li>
           <li>
             <strong>Intake from Midnight:</strong> exports one row per cow from 12:00 AM through
@@ -1751,7 +1956,7 @@ function Chart({ chartData }) {
             <g key={`tooltip-${row.key}`}>
               <circle cx={tooltipX + 14} cy={tooltipY + 42 + rowIndex * tooltipRowHeight} r="4" fill={row.color} />
               <text x={tooltipX + 24} y={tooltipY + 46 + rowIndex * tooltipRowHeight}>
-                {row.label}: {formatNumber(row.value)} {unitLabel || "kg"}{Number.isFinite(row.error) ? ` � ${formatNumber(row.error)} SE` : ""}
+                {row.label}: {formatNumber(row.value)} {unitLabel || "kg"}{Number.isFinite(row.error) ? ` +/- ${formatNumber(row.error)} SE` : ""}
               </text>
             </g>
           ))}
@@ -2544,15 +2749,6 @@ function formatMissingDateList(missingDates) {
   const visibleDates = missingDates.slice(0, 8).join(", ");
   return missingDates.length > 8 ? `${visibleDates}, +${missingDates.length - 8} more` : visibleDates;
 }
-function filterRowsByAssignedTreatment(rows, selectedTreatment) {
-  return rows.filter((row) => {
-    if (selectedTreatment !== ALL_TREATMENTS && row.treatment !== selectedTreatment) {
-      return false;
-    }
-    return true;
-  });
-}
-
 function getProcessedRows(rows, unitMode, ignoreNegative, intakeBasis, dmByRoughage) {
   const convertFromLbs = unitMode === "lbs";
   return rows
@@ -2575,25 +2771,151 @@ function filterRowsByScope(rows, scope) {
   if (scope === OVERALL_SCOPE) {
     return rows;
   }
+  const hasAssignedScopeRows = rows.some((row) => row.assignedRoughage === scope);
+  if (hasAssignedScopeRows) {
+    return rows.filter((row) => row.assignedRoughage === scope);
+  }
+  const scopedCows = new Set(
+    rows
+      .filter((row) => row.unlimited && row.roughageType === scope)
+      .map((row) => row.eartag)
+      .filter(Boolean)
+  );
+  if (scopedCows.size) {
+    return rows.filter((row) => scopedCows.has(row.eartag));
+  }
   return rows.filter((row) => row.roughageType === scope);
 }
 
-function buildSummary(rows) {
+function buildSummary(
+  chartData,
+  rows,
+  viewMode,
+  rangeStartInput = "",
+  rangeEndInput = "",
+  plotMode = AGGREGATE_PLOT_MODE,
+  selectedTreatmentGroups = []
+) {
   if (!rows.length) {
     return emptySummary;
   }
 
-  const unlimitedTotal = rows.filter((row) => row.unlimited).reduce((sum, row) => sum + row.intakeKg, 0);
-  const stolenTotal = rows.filter((row) => row.stolen).reduce((sum, row) => sum + row.intakeKg, 0);
   const cowCount = new Set(rows.map((row) => row.eartag)).size;
+  const dateSpanStart = rangeStartInput || rows[0].dateKey;
+  const dateSpanEnd = rangeEndInput || rows[rows.length - 1].dateKey;
+  const { unlimitedAverage, stolenAverage } = deriveDisplayedAverages(chartData, rows, viewMode, dateSpanStart, dateSpanEnd);
+  const totalDailyAverage = unlimitedAverage + stolenAverage;
+  const stolenPercent = totalDailyAverage > 0 ? (stolenAverage / totalDailyAverage) * 100 : 0;
+  const treatmentCards =
+    plotMode === TREATMENT_GROUP_PLOT_MODE && selectedTreatmentGroups.length > 1
+      ? buildTreatmentSummaryCards(chartData, selectedTreatmentGroups)
+      : [];
 
   return {
     rowsLoaded: rows.length.toLocaleString(),
     cowsTracked: cowCount.toLocaleString(),
-    unlimitedTotal: formatNumber(unlimitedTotal),
-    stolenTotal: formatNumber(stolenTotal),
-    dateSpan: `${rows[0].dateKey} to ${rows[rows.length - 1].dateKey}`,
+    unlimitedDailyAverage: formatNumber(unlimitedAverage),
+    stolenDailyAverage: formatNumber(stolenAverage),
+    stolenPercent: `${formatNumber(stolenPercent)}%`,
+    dateSpan: `${dateSpanStart} to ${dateSpanEnd}`,
+    treatmentCards,
   };
+}
+
+function deriveDisplayedAverages(chartData, rows, viewMode, dateSpanStart, dateSpanEnd) {
+  if (chartData?.points?.length && chartData?.series?.length) {
+    const unlimitedSeriesKeys = chartData.series
+      .filter((series) => isUnlimitedSeries(series))
+      .map((series) => series.key);
+    const stolenSeriesKeys = chartData.series
+      .filter((series) => isStolenSeries(series))
+      .map((series) => series.key);
+
+    if (viewMode === "day") {
+      const finalPoint = chartData.points[chartData.points.length - 1];
+      return {
+        unlimitedAverage: sumSeriesValuesForPoint(finalPoint, unlimitedSeriesKeys),
+        stolenAverage: sumSeriesValuesForPoint(finalPoint, stolenSeriesKeys),
+      };
+    }
+
+    const pointCount = chartData.points.length || 1;
+    const totals = chartData.points.reduce(
+      (accumulator, point) => ({
+        unlimited: accumulator.unlimited + sumSeriesValuesForPoint(point, unlimitedSeriesKeys),
+        stolen: accumulator.stolen + sumSeriesValuesForPoint(point, stolenSeriesKeys),
+      }),
+      { unlimited: 0, stolen: 0 }
+    );
+
+    return {
+      unlimitedAverage: totals.unlimited / pointCount,
+      stolenAverage: totals.stolen / pointCount,
+    };
+  }
+
+  const unlimitedTotal = rows.filter((row) => row.unlimited).reduce((sum, row) => sum + row.intakeKg, 0);
+  const stolenTotal = rows.filter((row) => row.stolen).reduce((sum, row) => sum + row.intakeKg, 0);
+  const dayCount = countDaysInclusive(dateSpanStart, dateSpanEnd);
+  return {
+    unlimitedAverage: unlimitedTotal / dayCount,
+    stolenAverage: stolenTotal / dayCount,
+  };
+}
+
+function sumSeriesValuesForPoint(point, seriesKeys) {
+  return seriesKeys.reduce((sum, key) => {
+    const value = point?.values?.[key];
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0);
+}
+
+function buildTreatmentSummaryCards(chartData, selectedTreatmentGroups) {
+  if (!chartData?.points?.length || !chartData?.series?.length) {
+    return [];
+  }
+
+  return selectedTreatmentGroups.map((treatment) => {
+    const unlimitedKey = getTreatmentSeriesKey(treatment, "unlimited");
+    const stolenKey = getTreatmentSeriesKey(treatment, "stolen");
+    const pointCount = chartData.points.length || 1;
+    const totals = chartData.points.reduce(
+      (accumulator, point) => ({
+        unlimited: accumulator.unlimited + (Number.isFinite(point?.values?.[unlimitedKey]) ? point.values[unlimitedKey] : 0),
+        stolen: accumulator.stolen + (Number.isFinite(point?.values?.[stolenKey]) ? point.values[stolenKey] : 0),
+      }),
+      { unlimited: 0, stolen: 0 }
+    );
+
+    return {
+      treatment,
+      unlimitedDailyAverage: formatNumber(totals.unlimited / pointCount),
+      stolenDailyAverage: formatNumber(totals.stolen / pointCount),
+    };
+  });
+}
+
+function isUnlimitedSeries(series) {
+  const text = `${series?.key || ""} ${series?.label || ""}`.toLowerCase();
+  return text.includes("unlimited");
+}
+
+function isStolenSeries(series) {
+  const text = `${series?.key || ""} ${series?.label || ""}`.toLowerCase();
+  return text.includes("stolen");
+}
+
+function countDaysInclusive(startDateKey, endDateKey) {
+  const start = parseDateKey(startDateKey);
+  const end = parseDateKey(endDateKey);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return 1;
+  }
+  const normalizedStart = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const normalizedEnd = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  const millisecondsPerDay = 24 * 60 * 60 * 1000;
+  const daySpan = Math.round((normalizedEnd - normalizedStart) / millisecondsPerDay);
+  return Math.max(1, daySpan + 1);
 }
 
 function buildSpecificDaySeries(rows, dayKey, scope, unitLabel, intakeLabelText) {
@@ -2695,18 +3017,18 @@ function buildRangeSummarySeries(rows, startDate, endDate, scope, unitLabel, int
 }
 function buildWeeklyAverageSeries(rows, startDate, endDate, scope, unitLabel, intakeLabelText) {
   const filteredRows = filterByDateRange(rows, startDate, endDate);
-  const daily = summarizeByDay(filteredRows, scope !== OVERALL_SCOPE);
+  const daily = summarizeCowAveragesByDay(filteredRows);
   const weekly = new Map();
 
   daily.forEach((values, dateKey) => {
     const weekKey = getWeekStart(dateKey);
     const bucket = weekly.get(weekKey) || {
-      unlimitedTotal: 0,
-      stolenTotal: 0,
+      unlimitedMeans: [],
+      stolenMeans: [],
       dayCount: 0,
     };
-    bucket.unlimitedTotal += values.unlimited;
-    bucket.stolenTotal += values.stolen;
+    bucket.unlimitedMeans.push(values.unlimited.mean);
+    bucket.stolenMeans.push(values.stolen.mean);
     bucket.dayCount += 1;
     weekly.set(weekKey, bucket);
   });
@@ -2716,19 +3038,23 @@ function buildWeeklyAverageSeries(rows, startDate, endDate, scope, unitLabel, in
     .map(([label, values]) => ({
       label,
       values: {
-        unlimited: values.dayCount ? values.unlimitedTotal / values.dayCount : 0,
-        stolen: values.dayCount ? values.stolenTotal / values.dayCount : 0,
+        unlimited: values.dayCount
+          ? values.unlimitedMeans.reduce((sum, value) => sum + value, 0) / values.dayCount
+          : 0,
+        stolen: values.dayCount
+          ? values.stolenMeans.reduce((sum, value) => sum + value, 0) / values.dayCount
+          : 0,
       },
     }));
 
   return {
     title:
       scope === OVERALL_SCOPE
-        ? `Weekly average totals: ${startDate || "start"} to ${endDate || "end"}`
+        ? `Weekly average means: ${startDate || "start"} to ${endDate || "end"}`
         : `Weekly average per cow: ${scope}`,
     status:
       scope === OVERALL_SCOPE
-        ? `Showing the average daily total ${intakeLabelText.toLowerCase()} inside each calendar week.`
+        ? `Showing the weekly mean of the daily unlimited and stolen ${intakeLabelText.toLowerCase()} averages.`
         : `Showing the average daily ${intakeLabelText.toLowerCase()} per cow inside each calendar week for roughage ${scope}.`,
     emptyMessage: "No weekly averages could be calculated for the selected range.",
     series: buildAggregateSeries(),
@@ -3617,6 +3943,623 @@ function formatNumber(value) {
   });
 }
 
+function slugifyFileName(value) {
+  return String(value || "report")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80) || "report";
+}
+
+function downloadTextFile(fileName, content, mimeType) {
+  const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function getImageSize(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve({ width: image.naturalWidth || image.width, height: image.naturalHeight || image.height });
+    image.onerror = reject;
+    image.src = dataUrl;
+  });
+}
+
+function buildIntakeAnalysisSummary({
+  viewMode,
+  plotMode,
+  analysisScope,
+  selectedCows,
+  selectedTreatmentGroups,
+  rangeStartInput,
+  rangeEndInput,
+  dayInput,
+}) {
+  const viewLabel =
+    viewMode === "weekly" ? "Weekly average of daily summaries" : viewMode === "range" ? "Day range summary" : "Specific day";
+  const plotLabel =
+    plotMode === TREATMENT_GROUP_PLOT_MODE
+      ? "Treatment group comparison"
+      : plotMode === PER_COW_PLOT_MODE
+        ? "Per-cow comparison"
+        : "Combined lines";
+  const scopeLabel = analysisScope === OVERALL_SCOPE ? "All uploaded cows combined" : `Average per cow for ${analysisScope}`;
+  const selectionNotes = [];
+
+  if (selectedCows.length) {
+    selectionNotes.push(`Cows: ${selectedCows.join(", ")}`);
+  }
+  if (selectedTreatmentGroups.length) {
+    selectionNotes.push(`Treatment groups: ${selectedTreatmentGroups.join(", ")}`);
+  }
+  if (dayInput) {
+    selectionNotes.push(`Specific day: ${dayInput}`);
+  }
+  if (rangeStartInput || rangeEndInput) {
+    selectionNotes.push(`Date window: ${rangeStartInput || "start"} to ${rangeEndInput || "end"}`);
+  }
+
+  return {
+    viewLabel,
+    plotLabel,
+    scopeLabel,
+    selectionNotes,
+  };
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildInteractiveHtmlReport({
+  chartTitle,
+  chartData,
+  summary,
+  intakeUnitLabel,
+  intakeLabelText,
+  statusText,
+  substatusText,
+  selectedFigures,
+  selectedTrackedCowRecord,
+  analysisSummary,
+}) {
+  const sections = [];
+
+  if (selectedFigures.includes("summary")) {
+    sections.push(`
+      <section class="report-section">
+        <h2>Summary cards</h2>
+        <div class="summary-grid">
+          ${[
+            ["Rows loaded", summary.rowsLoaded],
+            ["Cows tracked", summary.cowsTracked],
+            ...(
+              summary.treatmentCards?.length
+                ? summary.treatmentCards.flatMap((card) => [
+                    [`Treatment ${card.treatment} unlimited daily avg (${intakeUnitLabel})`, card.unlimitedDailyAverage],
+                    [`Treatment ${card.treatment} stolen daily avg (${intakeUnitLabel})`, card.stolenDailyAverage],
+                  ])
+                : [
+                    [`Unlimited daily avg (${intakeUnitLabel})`, summary.unlimitedDailyAverage],
+                    [`Stolen daily avg (${intakeUnitLabel})`, summary.stolenDailyAverage],
+                    ["Stolen % of daily intake", summary.stolenPercent],
+                  ]
+            ),
+            ["Date span", summary.dateSpan],
+          ]
+            .map(
+              ([label, value]) => `
+              <article class="summary-card">
+                <span>${escapeHtml(label)}</span>
+                <strong>${escapeHtml(value)}</strong>
+              </article>
+            `
+            )
+            .join("")}
+        </div>
+      </section>
+    `);
+  }
+
+  if (selectedFigures.includes("chart")) {
+    sections.push(`
+      <section class="report-section">
+        <h2>${escapeHtml(chartTitle || "Current intake chart")}</h2>
+        <p class="hint">Hover over the chart points to see each value and standard error when available.</p>
+        <div class="chart-wrap">
+          ${buildInteractiveChartSvgMarkup(chartData)}
+        </div>
+      </section>
+    `);
+  }
+
+  if (selectedFigures.includes("tracked") && selectedTrackedCowRecord) {
+    sections.push(`
+      <section class="report-section">
+        <h2>Selected tracked cow details</h2>
+        <div class="detail-card">
+          <span>Eartag</span>
+          <strong>${escapeHtml(selectedTrackedCowRecord.eartag)}</strong>
+          <p>EID / transponder: ${escapeHtml(selectedTrackedCowRecord.transponder)}</p>
+          <p>Rows: ${escapeHtml(selectedTrackedCowRecord.rowCount)}</p>
+        </div>
+      </section>
+    `);
+  }
+
+  if (selectedFigures.includes("notes")) {
+    sections.push(`
+      <section class="report-section">
+        <h2>Plot guide notes</h2>
+        <ul class="notes-list">
+          <li>All uploaded cows combined shows totals across every uploaded intake file.</li>
+          <li>Average per cow for a roughage type filters to that roughage type and shows the average intake per cow by bucket, day, or week.</li>
+          <li>Per-cow comparison shows one unlimited line and one stolen line for each selected cow.</li>
+          <li>Treatment group comparison keeps one color per treatment, with solid for unlimited and dashed for stolen.</li>
+        </ul>
+      </section>
+    `);
+  }
+
+  return `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Daily Intake Report</title>
+    <style>
+      :root {
+        --bg: #f4f5ef;
+        --panel: #fffdf8;
+        --text: #213631;
+        --muted: #4b6a61;
+        --accent: #18453b;
+        --accent-soft: rgba(24, 69, 59, 0.08);
+        --border: rgba(24, 69, 59, 0.14);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 28px;
+        background:
+          radial-gradient(circle at top right, rgba(24, 69, 59, 0.10), transparent 34%),
+          linear-gradient(180deg, #f8faf7, var(--bg));
+        color: var(--text);
+        font-family: Georgia, "Times New Roman", serif;
+      }
+      main { max-width: 1120px; margin: 0 auto; }
+      .hero, .report-section {
+        background: rgba(255, 253, 248, 0.92);
+        border: 1px solid var(--border);
+        border-radius: 20px;
+        padding: 22px 24px;
+        box-shadow: 0 14px 35px rgba(24, 69, 59, 0.08);
+      }
+      .hero { margin-bottom: 18px; }
+      .hero h1, .report-section h2 { margin: 0; }
+      .hero p { margin: 10px 0 0; color: var(--muted); }
+      .meta { margin-top: 14px; display: grid; gap: 8px; color: var(--muted); }
+      .report-section { margin-top: 18px; }
+      .summary-grid {
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+        gap: 14px;
+      }
+      .summary-card, .detail-card {
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 16px;
+        background: #fff;
+      }
+      .summary-card span, .detail-card span { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }
+      .summary-card strong, .detail-card strong { display: block; margin-top: 8px; font-size: 30px; line-height: 1.05; }
+      .detail-card p, .hint { color: var(--muted); }
+      .chart-wrap { overflow-x: auto; padding-top: 10px; }
+      .chart-interactive {
+        position: relative;
+      }
+      .chart-hover-tooltip {
+        position: absolute;
+        min-width: 220px;
+        max-width: 320px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(24, 69, 59, 0.18);
+        background: rgba(255, 253, 248, 0.98);
+        box-shadow: 0 12px 28px rgba(24, 69, 59, 0.16);
+        color: var(--text);
+        pointer-events: none;
+        opacity: 0;
+        transform: translateY(6px);
+        transition: opacity 0.12s ease, transform 0.12s ease;
+        z-index: 3;
+      }
+      .chart-hover-tooltip.is-visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .chart-hover-title {
+        font-weight: 700;
+        margin-bottom: 8px;
+      }
+      .chart-hover-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.35;
+      }
+      .chart-hover-row + .chart-hover-row {
+        margin-top: 4px;
+      }
+      .chart-hover-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        margin-top: 5px;
+        flex: 0 0 auto;
+      }
+      .chart-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px 18px;
+        margin: 14px 0 6px;
+        color: var(--muted);
+      }
+      .chart-legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .legend-swatch {
+        width: 38px;
+        height: 16px;
+        display: inline-block;
+      }
+      .notes-list { color: var(--muted); }
+      .notes-list li + li { margin-top: 8px; }
+      .svg-chart { width: 100%; min-width: 920px; height: auto; display: block; }
+      .svg-chart .tick-label, .svg-chart .axis-label { fill: #58736b; font-size: 12px; }
+      .svg-chart .grid-line, .svg-chart .axis-line { stroke: rgba(36, 37, 28, 0.14); stroke-width: 1; }
+      .svg-chart .series-line { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+      .svg-chart .point { paint-order: stroke; }
+      .svg-chart .chart-hit-zone { fill: transparent; }
+      .svg-chart .chart-hit-zone:focus { outline: none; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <h1>Daily Intake Report</h1>
+        <p>${escapeHtml(chartTitle || "Current intake chart")}</p>
+        <div class="meta">
+          <div><strong>Basis:</strong> ${escapeHtml(intakeLabelText)} (${escapeHtml(intakeUnitLabel)})</div>
+          <div><strong>Status:</strong> ${escapeHtml(statusText)}</div>
+          <div><strong>Loaded data:</strong> ${escapeHtml(substatusText)}</div>
+          <div><strong>Plot mode:</strong> ${escapeHtml(analysisSummary.viewLabel)} | ${escapeHtml(analysisSummary.plotLabel)}</div>
+          <div><strong>Scope:</strong> ${escapeHtml(analysisSummary.scopeLabel)}</div>
+          ${
+            analysisSummary.selectionNotes.length
+              ? `<div><strong>Selections:</strong> ${escapeHtml(analysisSummary.selectionNotes.join(" | "))}</div>`
+              : ""
+          }
+          <div><strong>Exported:</strong> ${escapeHtml(new Date().toLocaleString("en-US", { timeZone: TIME_ZONE }))}</div>
+        </div>
+      </section>
+      ${sections.join("")}
+    </main>
+    <script>
+      (() => {
+        const wrappers = document.querySelectorAll("[data-chart-interactive]");
+        wrappers.forEach((wrapper) => {
+          const tooltip = wrapper.querySelector("[data-chart-tooltip]");
+          if (!tooltip) {
+            return;
+          }
+
+          const hideTooltip = () => {
+            tooltip.classList.remove("is-visible");
+          };
+
+          const showTooltip = (event) => {
+            const zone = event.currentTarget;
+            const payload = zone.getAttribute("data-tooltip");
+            if (!payload) {
+              return;
+            }
+
+            const data = JSON.parse(payload);
+            tooltip.innerHTML = [
+              '<div class="chart-hover-title">' + data.label + '</div>',
+              ...data.rows.map((row) =>
+                '<div class="chart-hover-row">' +
+                  '<span class="chart-hover-dot" style="background:' + row.color + ';"></span>' +
+                  '<span>' + row.text + '</span>' +
+                '</div>'
+              ),
+            ].join("");
+
+            const wrapperRect = wrapper.getBoundingClientRect();
+            const tooltipRect = tooltip.getBoundingClientRect();
+            const pointerX = event.clientX - wrapperRect.left;
+            const pointerY = event.clientY - wrapperRect.top;
+            const maxLeft = Math.max(12, wrapperRect.width - tooltipRect.width - 12);
+            const left = Math.min(maxLeft, Math.max(12, pointerX + 14));
+            const top = Math.max(12, pointerY - tooltipRect.height - 14);
+
+            tooltip.style.left = left + "px";
+            tooltip.style.top = top + "px";
+            tooltip.classList.add("is-visible");
+          };
+
+          wrapper.querySelectorAll(".chart-hit-zone").forEach((zone) => {
+            zone.addEventListener("mouseenter", showTooltip);
+            zone.addEventListener("mousemove", showTooltip);
+            zone.addEventListener("focus", showTooltip);
+            zone.addEventListener("mouseleave", hideTooltip);
+            zone.addEventListener("blur", hideTooltip);
+          });
+
+          wrapper.addEventListener("mouseleave", hideTooltip);
+        });
+      })();
+    </script>
+  </body>
+</html>`;
+}
+
+function buildInteractiveChartSvgMarkup(chartData) {
+  if (!chartData?.points?.length || !chartData?.series?.length) {
+    return `<div class="detail-card"><p>No intake chart is available for the current filters.</p></div>`;
+  }
+
+  const width = 1000;
+  const hasRotatedLabels = chartData.points.length > 7;
+  const height = hasRotatedLabels ? 430 : 396;
+  const margin = { top: 24, right: hasRotatedLabels ? 40 : 28, bottom: hasRotatedLabels ? 110 : 70, left: 72 };
+  const innerWidth = width - margin.left - margin.right;
+  const innerHeight = height - margin.top - margin.bottom;
+  const xStep = chartData.points.length > 1 ? innerWidth / (chartData.points.length - 1) : 0;
+  const xLabelStep = getXAxisLabelStep(chartData.points.length);
+  const maxValue = Math.max(
+    ...chartData.points.flatMap((point) =>
+      chartData.series
+        .map((item) => {
+          const value = point.values[item.key];
+          const error = point.errors?.[item.key] || 0;
+          return value === null || value === undefined ? null : value + error;
+        })
+        .filter((value) => value !== null && value !== undefined)
+    ),
+    0
+  );
+  const yMax = maxValue === 0 ? 1 : maxValue * 1.1;
+  const yTicks = Array.from({ length: 6 }, (_, index) => {
+    const value = (yMax / 5) * index;
+    const y = margin.top + innerHeight - (value / yMax) * innerHeight;
+    return { value, y };
+  });
+
+  const seriesPaths = chartData.series
+    .map((series) => {
+      const path = buildPath(chartData.points, series.key, margin, innerWidth, innerHeight, yMax);
+      if (!path) {
+        return "";
+      }
+      return `
+        <path class="series-line" stroke="rgba(255, 253, 248, 0.95)" stroke-width="${(series.lineWidth || 3) + 4}" stroke-dasharray="${series.dashArray || (series.dashed ? "8 5" : "")}" d="${path}" />
+        <path class="series-line" stroke="${series.color}" stroke-width="${series.lineWidth || 3}" stroke-dasharray="${series.dashArray || (series.dashed ? "8 5" : "")}" d="${path}" />
+      `;
+    })
+    .join("");
+
+  const errorBars = chartData.series
+    .map((series) =>
+      chartData.points
+        .map((point, index) => {
+          const x = margin.left + (chartData.points.length > 1 ? xStep * index : innerWidth / 2);
+          const value = point.values[series.key];
+          const error = point.errors?.[series.key];
+          if (value === null || value === undefined || !Number.isFinite(error) || error <= 0) {
+            return "";
+          }
+          const y = margin.top + innerHeight - (value / yMax) * innerHeight;
+          const errorTop = margin.top + innerHeight - ((value + error) / yMax) * innerHeight;
+          const errorBottom = margin.top + innerHeight - ((value - error) / yMax) * innerHeight;
+          return `
+            <g>
+              <line x1="${x}" y1="${errorTop}" x2="${x}" y2="${errorBottom}" stroke="${series.color}" stroke-width="1.8" />
+              <line x1="${x - 5}" y1="${errorTop}" x2="${x + 5}" y2="${errorTop}" stroke="${series.color}" stroke-width="1.8" />
+              <line x1="${x - 5}" y1="${errorBottom}" x2="${x + 5}" y2="${errorBottom}" stroke="${series.color}" stroke-width="1.8" />
+            </g>
+          `;
+        })
+        .join("")
+    )
+    .join("");
+
+  const pointMarkup = chartData.series
+    .map((series) =>
+      chartData.points
+        .map((point, index) => {
+          const x = margin.left + (chartData.points.length > 1 ? xStep * index : innerWidth / 2);
+          const value = point.values[series.key];
+          if (value === null || value === undefined) {
+            return "";
+          }
+          const y = margin.top + innerHeight - (value / yMax) * innerHeight;
+          const tooltip = `${series.label}: ${formatNumber(value)} ${chartData.unitLabel || "kg"}${
+            Number.isFinite(point.errors?.[series.key]) ? ` +/- ${formatNumber(point.errors[series.key])} SE` : ""
+          } on ${formatXAxisLabel(point.label, false)}`;
+          return `<g><title>${escapeHtml(tooltip)}</title>${renderMarkerShapeMarkup({
+            shape: series.markerShape || "circle",
+            x,
+            y,
+            size: 6.2,
+            color: series.color,
+            filled: series.markerFilled !== false,
+          })}</g>`;
+        })
+        .join("")
+    )
+    .join("");
+
+  const xLabels = chartData.points
+    .map((point, index) => {
+      if (index % xLabelStep !== 0 && index !== chartData.points.length - 1) {
+        return "";
+      }
+      const x = margin.left + (chartData.points.length > 1 ? xStep * index : innerWidth / 2);
+      const label = escapeHtml(formatXAxisLabel(point.label, hasRotatedLabels));
+      return hasRotatedLabels
+        ? `<text class="tick-label" x="${x}" y="${margin.top + innerHeight + 42}" transform="rotate(-35 ${x} ${margin.top + innerHeight + 42})" text-anchor="end">${label}</text>`
+        : `<text class="tick-label" x="${x}" y="${margin.top + innerHeight + 26}" text-anchor="middle">${label}</text>`;
+    })
+    .join("");
+
+  const hitZoneWidth = chartData.points.length > 1 ? Math.max(18, xStep * 0.8) : 42;
+  const hitZones = chartData.points
+    .map((point, index) => {
+      const x = margin.left + (chartData.points.length > 1 ? xStep * index : innerWidth / 2);
+      const rows = chartData.series
+        .map((series) => {
+          const value = point.values?.[series.key];
+          if (!Number.isFinite(value)) {
+            return null;
+          }
+          const error = point.errors?.[series.key];
+          return {
+            color: series.color,
+            text: `${series.label}: ${formatNumber(value)} ${chartData.unitLabel || "kg"}${
+              Number.isFinite(error) ? ` +/- ${formatNumber(error)} SE` : ""
+            }`,
+          };
+        })
+        .filter(Boolean);
+
+      return `<rect
+        class="chart-hit-zone"
+        x="${x - hitZoneWidth / 2}"
+        y="${margin.top}"
+        width="${hitZoneWidth}"
+        height="${innerHeight}"
+        tabindex="0"
+        data-tooltip='${escapeHtml(JSON.stringify({ label: formatXAxisLabel(point.label, false), rows }))}'
+      />`;
+    })
+    .join("");
+
+  const legendMarkup = `
+    <div class="chart-legend">
+      ${chartData.series
+        .map(
+          (series) => `
+          <span class="chart-legend-item">
+            ${buildHtmlLegendSwatch(series)}
+            <span>${escapeHtml(series.label)}</span>
+          </span>
+        `
+        )
+        .join("")}
+    </div>
+  `;
+
+  return `
+    ${legendMarkup}
+    <div class="chart-interactive" data-chart-interactive>
+      <div class="chart-hover-tooltip" data-chart-tooltip></div>
+      <svg class="svg-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(chartData.title || "Intake chart")}">
+        ${yTicks
+          .map(
+            (tick) => `
+            <g>
+              <line class="grid-line" x1="${margin.left}" y1="${tick.y}" x2="${width - margin.right}" y2="${tick.y}" />
+              <text class="tick-label" x="${margin.left - 12}" y="${tick.y + 4}" text-anchor="end">${formatNumber(tick.value)}</text>
+            </g>
+          `
+          )
+          .join("")}
+        <line class="axis-line" x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${margin.top + innerHeight}" />
+        <line class="axis-line" x1="${margin.left}" y1="${margin.top + innerHeight}" x2="${width - margin.right}" y2="${margin.top + innerHeight}" />
+        ${seriesPaths}
+        ${errorBars}
+        ${pointMarkup}
+        ${xLabels}
+        ${hitZones}
+        <text class="axis-label" x="${margin.left - 46}" y="${margin.top - 6}">${escapeHtml(chartData.unitLabel || "kg")}</text>
+      </svg>
+    </div>
+  `;
+}
+
+function buildHtmlLegendSwatch(series) {
+  return `
+    <svg class="legend-swatch" viewBox="0 0 38 16" aria-hidden="true">
+      <line
+        x1="3"
+        y1="8"
+        x2="35"
+        y2="8"
+        stroke="rgba(255, 253, 248, 0.95)"
+        stroke-width="${(series.lineWidth || 3) + 4}"
+        stroke-linecap="round"
+        stroke-dasharray="${series.dashArray || (series.dashed ? "8 5" : "")}"
+      />
+      <line
+        x1="3"
+        y1="8"
+        x2="35"
+        y2="8"
+        stroke="${series.color}"
+        stroke-width="${series.lineWidth || 3}"
+        stroke-linecap="round"
+        stroke-dasharray="${series.dashArray || (series.dashed ? "8 5" : "")}"
+      />
+      ${renderMarkerShapeMarkup({
+        shape: series.markerShape || "circle",
+        x: 19,
+        y: 8,
+        size: 5.4,
+        color: series.color,
+        filled: series.markerFilled !== false,
+      })}
+    </svg>
+  `;
+}
+
+function renderMarkerShapeMarkup({ shape, x, y, size, color, filled }) {
+  const strokeWidth = filled ? 2.2 : 2.6;
+  const fill = filled ? color : "#fffdf8";
+
+  if (shape === "square") {
+    return `<rect class="point" x="${x - size}" y="${y - size}" width="${size * 2}" height="${size * 2}" rx="1.5" stroke="${color}" stroke-width="${strokeWidth}" fill="${fill}" />`;
+  }
+
+  if (shape === "diamond") {
+    return `<polygon class="point" points="${x},${y - size} ${x + size},${y} ${x},${y + size} ${x - size},${y}" stroke="${color}" stroke-width="${strokeWidth}" fill="${fill}" />`;
+  }
+
+  if (shape === "triangle") {
+    return `<polygon class="point" points="${x},${y - size} ${x + size},${y + size} ${x - size},${y + size}" stroke="${color}" stroke-width="${strokeWidth}" fill="${fill}" />`;
+  }
+
+  return `<circle class="point" cx="${x}" cy="${y}" r="${size}" stroke="${color}" stroke-width="${strokeWidth}" fill="${fill}" />`;
+}
+
 function toCsv(rows, headers) {
   const lines = [headers.join(",")];
   rows.forEach((row) => {
@@ -3644,6 +4587,8 @@ function countDistinct(rows, key) {
 function getScopeTitle(scope) {
   return scope === OVERALL_SCOPE ? "All uploaded cows combined" : `Average per cow for roughage ${scope}`;
 }
+
+
 
 
 
